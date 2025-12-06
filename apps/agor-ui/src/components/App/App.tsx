@@ -111,6 +111,8 @@ export interface AppProps {
       pull_request_url?: string;
     }
   ) => Promise<Worktree | null>;
+  onOpenVSCode?: (worktreeId: string) => void;
+  onOpenCodeServer?: (worktreeId: string) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
   onNukeEnvironment?: (worktreeId: string) => void;
@@ -170,6 +172,8 @@ export const App: React.FC<AppProps> = ({
   onUnarchiveWorktree,
   onUpdateWorktree,
   onCreateWorktree,
+  onOpenVSCode,
+  onOpenCodeServer,
   onStartEnvironment,
   onStopEnvironment,
   onNukeEnvironment,
@@ -536,6 +540,8 @@ export const App: React.FC<AppProps> = ({
       onOpenSettings: (sessionId: string) => setSessionSettingsId(sessionId),
       onOpenWorktree: (worktreeId: string) => setWorktreeModalWorktreeId(worktreeId),
       onOpenTerminal: handleOpenTerminal,
+      onOpenVSCode,
+      onOpenCodeServer,
     }),
     [
       onSendPrompt,
@@ -547,6 +553,8 @@ export const App: React.FC<AppProps> = ({
       onStartEnvironment,
       onStopEnvironment,
       onNukeEnvironment,
+      onOpenVSCode,
+      onOpenCodeServer,
       handleOpenTerminal,
     ]
   );
@@ -753,6 +761,8 @@ export const App: React.FC<AppProps> = ({
                         }}
                         onArchiveOrDeleteWorktree={onArchiveOrDeleteWorktree}
                         onOpenTerminal={handleOpenTerminal}
+                        onOpenVSCode={onOpenVSCode}
+                        onOpenCodeServer={onOpenCodeServer}
                         onStartEnvironment={onStartEnvironment}
                         onStopEnvironment={onStopEnvironment}
                         onViewLogs={setLogsModalWorktreeId}

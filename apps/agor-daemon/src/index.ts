@@ -313,6 +313,7 @@ async function main() {
 
   // Create Feathers app
   const app = feathersExpress(feathers());
+  app.set('agorConfig', config);
 
   // Enable CORS for all REST API requests
   // Support UI port and 3 additional ports (for parallel dev servers)
@@ -4109,6 +4110,48 @@ async function main() {
     } as any,
     {
       find: { role: 'member', action: 'check worktree health' },
+    },
+    requireAuth
+  );
+
+  // POST /worktrees-open-vscode - Generate VS Code deep link (socket/HTTP friendly)
+  registerAuthenticatedRoute(
+    app,
+    '/worktrees-open-vscode',
+    {
+      async create(data: { worktreeId?: string }, params: RouteParams) {
+        if (!data?.worktreeId) {
+          throw new Error('worktreeId is required');
+        }
+        return worktreesService.getVSCodeTarget(
+          data.worktreeId as import('@agor/core/types').WorktreeID,
+          params
+        );
+      },
+    },
+    {
+      create: { role: 'member', action: 'open worktrees in VS Code' },
+    },
+    requireAuth
+  );
+
+  // POST /worktrees-open-codeserver - Generate code-server URL (socket/HTTP friendly)
+  registerAuthenticatedRoute(
+    app,
+    '/worktrees-open-codeserver',
+    {
+      async create(data: { worktreeId?: string }, params: RouteParams) {
+        if (!data?.worktreeId) {
+          throw new Error('worktreeId is required');
+        }
+        return worktreesService.getCodeServerTarget(
+          data.worktreeId as import('@agor/core/types').WorktreeID,
+          params
+        );
+      },
+    },
+    {
+      create: { role: 'member', action: 'open worktrees in code-server' },
     },
     requireAuth
   );

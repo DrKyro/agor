@@ -633,6 +633,8 @@ export const users = pgTable(
             serverUrl?: string;
           };
         };
+        // User-level SSH config (public key + host/user/port/target)
+        ssh_config?: import('@agor/core/types').UserSSHConfig;
       }>()
       .notNull(),
   },

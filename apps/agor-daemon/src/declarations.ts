@@ -19,6 +19,7 @@ import type {
   Repo,
   Session,
   Task,
+  VSCodeOpenResult,
   Worktree,
   WorktreeID,
 } from '@agor/core/types';
@@ -207,6 +208,11 @@ export interface WorktreesServiceImpl extends Service<Worktree, Partial<Worktree
   restartEnvironment(id: WorktreeID, params?: FeathersParams): Promise<Worktree>;
   nukeEnvironment(id: WorktreeID, params?: FeathersParams): Promise<Worktree>;
   checkHealth(id: WorktreeID, params?: FeathersParams): Promise<Worktree>;
+  getVSCodeTarget(id: WorktreeID, params?: FeathersParams): Promise<VSCodeOpenResult>;
+  getCodeServerTarget(
+    id: WorktreeID,
+    params?: FeathersParams
+  ): Promise<import('@agor/core/types').CodeServerOpenResult>;
   getLogs(
     id: WorktreeID,
     params?: FeathersParams

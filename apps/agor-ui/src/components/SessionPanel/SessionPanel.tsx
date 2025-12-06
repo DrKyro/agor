@@ -13,8 +13,10 @@ import {
   BranchesOutlined,
   CloseOutlined,
   CodeOutlined,
+  CodeSandboxOutlined,
   DeleteOutlined,
   ForkOutlined,
+  GlobalOutlined,
   SendOutlined,
   SettingOutlined,
   StopOutlined,
@@ -88,6 +90,8 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
     onUpdateSession,
     onDeleteSession: onDelete,
     onOpenTerminal,
+    onOpenVSCode,
+    onOpenCodeServer,
   } = useAppActions();
 
   // Per-session draft storage
@@ -755,6 +759,24 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
                   type="text"
                   icon={<CodeOutlined />}
                   onClick={() => onOpenTerminal([`cd ${worktree.path}`], worktree.worktree_id)}
+                />
+              </Tooltip>
+            )}
+            {onOpenVSCode && worktree && (
+              <Tooltip title="Open in VS Code">
+                <Button
+                  type="text"
+                  icon={<CodeSandboxOutlined />}
+                  onClick={() => onOpenVSCode(worktree.worktree_id)}
+                />
+              </Tooltip>
+            )}
+            {onOpenCodeServer && worktree && (
+              <Tooltip title="在浏览器中打开 code-server">
+                <Button
+                  type="text"
+                  icon={<GlobalOutlined />}
+                  onClick={() => onOpenCodeServer(worktree.worktree_id)}
                 />
               </Tooltip>
             )}
