@@ -14,6 +14,7 @@ import {
   CloseCircleOutlined,
   CodeOutlined,
   CopyOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
   FileTextOutlined,
@@ -138,6 +139,10 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
   const [customContextJson, setCustomContextJson] = useState(
     JSON.stringify(worktree.custom_context || {}, null, 2)
   );
+  const [isEditingWorktreeEnv, setIsEditingWorktreeEnv] = useState(false);
+  const [worktreeEnvText, setWorktreeEnvText] = useState(worktree.env_vars_text || '');
+  const [savedWorktreeEnvText, setSavedWorktreeEnvText] = useState(worktree.env_vars_text || '');
+  const [savingWorktreeEnv, setSavingWorktreeEnv] = useState(false);
 
   // Environment control state
   const [envStatus, setEnvStatus] = useState(worktree.environment_instance?.status || 'stopped');
@@ -154,8 +159,21 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
   // Track previous worktree reference to detect actual prop changes (not just editing flag changes)
   const prevWorktreeRef = useRef(worktree);
 
+  // Track latest worktreeEnvText to avoid WebSocket closure issues
+  const worktreeEnvTextRef = useRef(worktreeEnvText);
+  useEffect(() => {
+    worktreeEnvTextRef.current = worktreeEnvText;
+  }, [worktreeEnvText]);
+
   // Sync state when worktree prop changes
   useEffect(() => {
+    console.log('[EnvironmentTab] worktree prop changed:', {
+      id: worktree.worktree_id.substring(0, 8),
+      name: worktree.name,
+      hasEnvVarsText: worktree.env_vars_text !== undefined,
+      envVarsTextLength: worktree.env_vars_text?.length || 0,
+    });
+
     // Always sync environment_instance fields (these update frequently)
     setEnvStatus(worktree.environment_instance?.status || 'stopped');
     setLastHealthCheck(worktree.environment_instance?.last_health_check);
@@ -180,7 +198,20 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     if (!isEditingContext && worktreeChanged) {
       setCustomContextJson(JSON.stringify(worktree.custom_context || {}, null, 2));
     }
-  }, [worktree, isEditingUrls, isEditingContext]);
+
+    // Sync env_vars_text (always update when worktree changes, even if empty)
+    if (worktreeChanged) {
+      console.log('[EnvironmentTab] Setting worktreeEnvText:', {
+        envVarsText: worktree.env_vars_text?.substring(0, 100),
+        length: worktree.env_vars_text?.length || 0,
+      });
+      const nextEnvText = worktree.env_vars_text || '';
+      setSavedWorktreeEnvText(nextEnvText);
+      if (!isEditingWorktreeEnv) {
+        setWorktreeEnvText(nextEnvText);
+      }
+    }
+  }, [worktree, isEditingUrls, isEditingContext, isEditingWorktreeEnv]);
 
   // WebSocket listener for real-time environment updates
   useEffect(() => {
@@ -188,22 +219,28 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
 
     const handleWorktreeUpdate = (data: unknown) => {
       const updatedWorktree = data as Worktree;
-      console.log(
-        '🔄 WebSocket worktree update:',
-        updatedWorktree.worktree_id.substring(0, 8),
-        updatedWorktree.environment_instance
-      );
       if (updatedWorktree.worktree_id === worktree.worktree_id) {
-        console.log('✅ Updating UI state for worktree:', worktree.name);
         setEnvStatus(updatedWorktree.environment_instance?.status || 'stopped');
         setLastHealthCheck(updatedWorktree.environment_instance?.last_health_check);
         setProcessInfo(updatedWorktree.environment_instance?.process);
+
+        // Update env_vars_text when worktree is updated via WebSocket
+        // Use ref to get latest value to avoid closure issues
+        if (updatedWorktree.env_vars_text !== undefined) {
+          setSavedWorktreeEnvText(updatedWorktree.env_vars_text);
+          if (
+            !isEditingWorktreeEnv &&
+            updatedWorktree.env_vars_text !== worktreeEnvTextRef.current
+          ) {
+            setWorktreeEnvText(updatedWorktree.env_vars_text);
+          }
+        }
       }
     };
 
     client.service('worktrees').on('patched', handleWorktreeUpdate);
     return () => client.service('worktrees').removeListener('patched', handleWorktreeUpdate);
-  }, [client, worktree.worktree_id, worktree.name]);
+  }, [client, worktree.worktree_id, isEditingWorktreeEnv]);
 
   // Environment control handlers
   const handleStart = async () => {
@@ -394,6 +431,12 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     repo.environment_config,
   ]);
 
+  const worktreeEnvKeys = useMemo(() => Object.keys(worktree.env_vars || {}), [worktree.env_vars]);
+  const hasStoredWorktreeEnv = useMemo(
+    () => !!savedWorktreeEnvText.trim() || worktreeEnvKeys.length > 0,
+    [savedWorktreeEnvText, worktreeEnvKeys]
+  );
+
   const handleSaveTemplate = () => {
     if (!onUpdateRepo) return;
 
@@ -433,6 +476,46 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     }
   };
 
+  const handleSaveWorktreeEnv = async () => {
+    if (!onUpdateWorktree) return;
+    setSavingWorktreeEnv(true);
+    try {
+      await onUpdateWorktree(worktree.worktree_id, {
+        env_vars_text: worktreeEnvText,
+      });
+      setSavedWorktreeEnvText(worktreeEnvText);
+      setIsEditingWorktreeEnv(false);
+    } catch (error) {
+      showError(
+        error instanceof Error ? error.message : 'Failed to save worktree environment variables'
+      );
+    } finally {
+      setSavingWorktreeEnv(false);
+    }
+  };
+
+  const handleClearWorktreeEnv = async () => {
+    if (!onUpdateWorktree) return;
+    setSavingWorktreeEnv(true);
+    try {
+      await onUpdateWorktree(worktree.worktree_id, { env_vars_text: '' });
+      setWorktreeEnvText('');
+      setSavedWorktreeEnvText('');
+      setIsEditingWorktreeEnv(false);
+    } catch (error) {
+      showError(
+        error instanceof Error ? error.message : 'Failed to clear worktree environment variables'
+      );
+    } finally {
+      setSavingWorktreeEnv(false);
+    }
+  };
+
+  const handleCancelWorktreeEnv = () => {
+    setWorktreeEnvText(savedWorktreeEnvText || '');
+    setIsEditingWorktreeEnv(false);
+  };
+
   const handleCancelTemplate = () => {
     setUpCommand(repo.environment_config?.up_command || '');
     setDownCommand(repo.environment_config?.down_command || '');
@@ -455,7 +538,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     try {
       const updated = (await client
         .service(`repos/${repo.repo_id}/import-agor-yml`)
-        .create({})) as Repo;
+        .create({ worktree_id: worktree.worktree_id })) as Repo;
 
       // Note: onUpdateRepo already shows a success toast, so we don't show another one here
       // Update local state
@@ -1292,6 +1375,104 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                     </Typography.Text>
                   </Descriptions.Item>
                 </Descriptions>
+              )}
+            </div>
+
+            {/* Worktree-scoped Env Vars */}
+            <div>
+              <Space
+                style={{
+                  width: '100%',
+                  justifyContent: 'space-between',
+                  marginBottom: 6,
+                  marginTop: 12,
+                }}
+              >
+                <Typography.Text strong style={{ fontSize: 13 }}>
+                  Worktree Env (.env)
+                </Typography.Text>
+                {!isEditingWorktreeEnv && (
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={() => setIsEditingWorktreeEnv(true)}
+                  >
+                    编辑
+                  </Button>
+                )}
+              </Space>
+              <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                仅作用于当前 worktree，优先级高于用户级环境变量。直接粘贴 .env 原文，一行一个
+                KEY=VALUE。
+              </Typography.Text>
+
+              {isEditingWorktreeEnv ? (
+                <Space direction="vertical" size="small" style={{ width: '100%', marginTop: 8 }}>
+                  <TextArea
+                    value={worktreeEnvText}
+                    onChange={(e) => setWorktreeEnvText(e.target.value)}
+                    placeholder={
+                      'DATABASE_URL=postgres://user:pass@localhost:5432/app\nREDIS_URL=redis://localhost:6379'
+                    }
+                    autoSize={{ minRows: 8, maxRows: 16 }}
+                    style={{ fontFamily: 'monospace', fontSize: 11 }}
+                  />
+
+                  <Space>
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<SaveOutlined />}
+                      onClick={handleSaveWorktreeEnv}
+                      loading={savingWorktreeEnv}
+                    >
+                      保存环境变量
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={handleCancelWorktreeEnv}
+                      disabled={savingWorktreeEnv}
+                    >
+                      取消
+                    </Button>
+                    <Button
+                      danger
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      onClick={handleClearWorktreeEnv}
+                      loading={savingWorktreeEnv}
+                      disabled={!hasStoredWorktreeEnv && !worktreeEnvText.trim()}
+                    >
+                      清空
+                    </Button>
+                  </Space>
+                </Space>
+              ) : (
+                <div
+                  style={{
+                    width: '100%',
+                    marginTop: 8,
+                    padding: token.paddingSM,
+                    border: `1px solid ${token.colorBorder}`,
+                    borderRadius: token.borderRadius,
+                    background: token.colorBgContainer,
+                    maxHeight: 220,
+                    overflow: 'auto',
+                  }}
+                >
+                  <Paragraph
+                    code
+                    style={{
+                      fontSize: 11,
+                      margin: 0,
+                      whiteSpace: 'pre-wrap',
+                    }}
+                    copyable={worktreeEnvText ? { text: worktreeEnvText } : undefined}
+                  >
+                    {worktreeEnvText || '暂无工作树环境变量，点击右上角编辑以添加。'}
+                  </Paragraph>
+                </div>
               )}
             </div>
           </Space>

@@ -1,0 +1,1 @@
+ALTER TABLE "worktrees" ADD COLUMN "env_vars_text" text;

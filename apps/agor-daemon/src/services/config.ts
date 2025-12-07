@@ -7,6 +7,7 @@
 
 import { type AgorConfig, loadConfig, resolveApiKey, saveConfig } from '@agor/core/config';
 import type { Database } from '@agor/core/db';
+import type { Application } from '@agor/core/feathers';
 import type { Params, TaskID, UserID } from '@agor/core/types';
 
 /**
@@ -39,9 +40,11 @@ function maskCredentials(config: AgorConfig): AgorConfig {
  */
 export class ConfigService {
   private db: Database;
+  private app?: Application;
 
-  constructor(db: Database) {
+  constructor(db: Database, app?: Application) {
     this.db = db;
+    this.app = app;
   }
 
   /**
@@ -92,8 +95,7 @@ export class ConfigService {
     // Fetch task to get creator user ID
     let userId: UserID | undefined;
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: App reference stored dynamically for cross-service calls
-      const tasksService = (this as any).app?.service('tasks');
+      const tasksService = this.app?.service('tasks');
       if (tasksService) {
         const task = await tasksService.get(taskId, { provider: undefined });
         userId = task?.created_by;
@@ -229,6 +231,8 @@ export class ConfigService {
 
     await saveConfig(config);
     console.log('[Config Service] Config saved successfully');
+    // Hot-update in-memory config so runtime features read latest values
+    this.app?.set('agorConfig', config);
 
     // Propagate credentials to process.env for hot-reload
     // Precedence rule: config.yaml (UI) > environment variables
@@ -252,6 +256,6 @@ export class ConfigService {
 /**
  * Service factory function
  */
-export function createConfigService(db: Database): ConfigService {
-  return new ConfigService(db);
+export function createConfigService(db: Database, app?: Application): ConfigService {
+  return new ConfigService(db, app);
 }

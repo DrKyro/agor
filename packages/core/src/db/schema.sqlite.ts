@@ -392,6 +392,9 @@ export const worktrees = sqliteTable(
     app_url: text('app_url'), // Application URL (initialized from repo's app_url_template)
     logs_command: text('logs_command'), // Logs command (initialized from repo's logs_command template)
 
+    // Worktree environment variables (plaintext, for UI display)
+    env_vars_text: text('env_vars_text'), // Raw .env file content
+
     // Board relationship (nullable - worktrees can exist without boards)
     board_id: text('board_id', { length: 36 }).references(() => boards.board_id, {
       onDelete: 'set null', // If board is deleted, worktree remains but loses board association
@@ -467,6 +470,8 @@ export const worktrees = sqliteTable(
           }>;
           logs?: string[];
         };
+        // Worktree-scoped environment variables (encrypted values)
+        env_vars?: Record<string, string>;
 
         last_used: string; // ISO timestamp
 

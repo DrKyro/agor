@@ -16,13 +16,17 @@ import {
   type AgorIDEVSCodeSettings,
   createUserProcessEnvironment,
   ENVIRONMENT,
+  formatValidationErrors,
+  resolveWorktreeEnvironment,
+  validateEnvVar,
 } from '@agor/core/config';
-import { type Database, WorktreeRepository } from '@agor/core/db';
+import { type Database, encryptApiKey, WorktreeRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
 import { cleanWorktree, removeWorktree } from '@agor/core/git';
 import type {
   BoardID,
   CodeServerOpenResult,
+  Paginated,
   QueryParams,
   Repo,
   User,
@@ -35,6 +39,7 @@ import type {
   WorktreeID,
 } from '@agor/core/types';
 import { getNextRunTime, validateCron } from '@agor/core/utils/cron';
+import { parse as parseDotenv } from 'dotenv';
 import Handlebars from 'handlebars';
 import { DrizzleService } from '../adapters/drizzle';
 
@@ -93,6 +98,18 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
   }
 
   /**
+   * Get the latest config (updated via config service) with fallback to initial snapshot
+   */
+  private getLatestConfig(): AgorConfig {
+    const updatedConfig = this.app.get('agorConfig') as AgorConfig | undefined;
+    if (updatedConfig) {
+      this.config = updatedConfig;
+      return updatedConfig;
+    }
+    return this.config;
+  }
+
+  /**
    * Get board-objects service (lazy-loaded to prevent circular dependencies)
    * FIX: Cache service reference instead of calling this.app.service() repeatedly
    */
@@ -108,6 +125,52 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
   }
 
   /**
+   * Attach plaintext env vars (joined as .env) for UI display
+   * If env_vars_text is not in the database, try to reconstruct from encrypted env_vars
+   */
+  private async attachEnvVarsText(worktree: Worktree): Promise<Worktree> {
+    console.log('[attachEnvVarsText] Processing worktree:', {
+      id: worktree.worktree_id.substring(0, 8),
+      name: worktree.name,
+      hasEnvVarsText: worktree.env_vars_text !== undefined,
+      envVarsTextLength: worktree.env_vars_text?.length || 0,
+    });
+
+    // If env_vars_text already exists in the database, return as-is
+    if (worktree.env_vars_text !== undefined) {
+      console.log('[attachEnvVarsText] env_vars_text already exists, returning as-is');
+      return worktree;
+    }
+
+    // Otherwise, try to reconstruct from encrypted env_vars
+    try {
+      console.log('[attachEnvVarsText] Reconstructing env_vars_text from encrypted data');
+      const env = await resolveWorktreeEnvironment(worktree.worktree_id, this.db);
+      const envText =
+        Object.entries(env)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, value]) => `${key}=${value}`)
+          .join('\n') || undefined;
+
+      console.log('[attachEnvVarsText] Reconstructed env_vars_text:', {
+        hasText: envText !== undefined,
+        length: envText?.length || 0,
+      });
+
+      return {
+        ...worktree,
+        env_vars_text: envText,
+      };
+    } catch (error) {
+      console.error(
+        `Failed to resolve worktree env vars for ${worktree.worktree_id}:`,
+        error instanceof Error ? error.message : error
+      );
+      return worktree;
+    }
+  }
+
+  /**
    * Override patch to handle board_objects when board_id changes and schedule validation
    */
   async patch(id: WorktreeID, data: Partial<Worktree>, params?: WorktreeParams): Promise<Worktree> {
@@ -116,6 +179,38 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
     const oldBoardId = currentWorktree.board_id;
     const boardIdProvided = Object.hasOwn(data, 'board_id');
     const newBoardId = data.board_id;
+
+    // Handle worktree-scoped environment variables (raw .env text)
+    if (Object.hasOwn(data as Record<string, unknown>, 'env_vars_text')) {
+      const rawEnvText = (data as { env_vars_text?: string }).env_vars_text ?? '';
+      const parsed = rawEnvText ? parseDotenv(rawEnvText) : {};
+      const nextEnvVars: Record<string, string> = {};
+      const errors: string[] = [];
+
+      for (const [key, value] of Object.entries(parsed)) {
+        const stringValue = value === undefined ? '' : String(value);
+        const validationErrors = validateEnvVar(key, stringValue);
+
+        if (validationErrors.length > 0) {
+          errors.push(formatValidationErrors(validationErrors));
+        } else {
+          nextEnvVars[key] = stringValue;
+        }
+      }
+
+      if (errors.length > 0) {
+        throw new Error(`Invalid environment variables:\n${errors.join('\n')}`);
+      }
+
+      const encryptedEnvVars: Record<string, string> = {};
+      for (const [key, value] of Object.entries(nextEnvVars)) {
+        encryptedEnvVars[key] = encryptApiKey(value);
+      }
+
+      (
+        data as Partial<Worktree> & { _encrypted_env_vars?: Record<string, string> }
+      )._encrypted_env_vars = encryptedEnvVars;
+    }
 
     // ===== SCHEDULER VALIDATION =====
 
@@ -191,7 +286,15 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
       }
     }
 
-    return updatedWorktree;
+    return await this.attachEnvVarsText(updatedWorktree as Worktree);
+  }
+
+  /**
+   * Override get to include plaintext env vars
+   */
+  async get(id: WorktreeID, params?: WorktreeParams): Promise<Worktree> {
+    const worktree = await super.get(id, params);
+    return await this.attachEnvVarsText(worktree as Worktree);
   }
 
   /**
@@ -203,22 +306,42 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
     // If repo_id filter is provided, use repository method
     if (repo_id) {
       const worktrees = await this.worktreeRepo.findAll({ repo_id });
+      const worktreesWithEnv = await Promise.all(worktrees.map((w) => this.attachEnvVarsText(w)));
 
       // Return with pagination if enabled
       if (this.paginate) {
         return {
-          total: worktrees.length,
+          total: worktreesWithEnv.length,
           limit: params?.query?.$limit || this.paginate.default || 50,
           skip: params?.query?.$skip || 0,
-          data: worktrees,
+          data: worktreesWithEnv,
         };
       }
 
-      return worktrees;
+      return worktreesWithEnv;
     }
 
     // Otherwise, use default find
-    return super.find(params);
+    const result = await super.find(params);
+
+    // Paginated result
+    if (
+      result &&
+      typeof result === 'object' &&
+      Array.isArray((result as Paginated<Worktree>).data)
+    ) {
+      const dataWithEnv = await Promise.all(
+        (result as Paginated<Worktree>).data.map((w) => this.attachEnvVarsText(w))
+      );
+      return { ...(result as Paginated<Worktree>), data: dataWithEnv };
+    }
+
+    // Non-paginated array
+    if (Array.isArray(result)) {
+      return await Promise.all(result.map((w) => this.attachEnvVarsText(w as Worktree)));
+    }
+
+    return result;
   }
 
   /**
@@ -590,7 +713,8 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
       await mkdir(dirname(logPath), { recursive: true });
 
       // Create clean environment for user process (filters Agor-internal vars like NODE_ENV)
-      const env = await createUserProcessEnvironment(worktree.created_by, this.db);
+      const worktreeEnv = await resolveWorktreeEnvironment(worktree.worktree_id, this.db);
+      const env = await createUserProcessEnvironment(worktree.created_by, this.db, worktreeEnv);
 
       // Execute command and wait for it to complete
       // The command should start services and return (e.g., docker-compose up -d)
@@ -674,7 +798,8 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
         console.log(`🛑 Stopping environment for worktree ${worktree.name}: ${command}`);
 
         // Create clean environment for user process (filters Agor-internal vars like NODE_ENV)
-        const env = await createUserProcessEnvironment(worktree.created_by, this.db);
+        const worktreeEnv = await resolveWorktreeEnvironment(worktree.worktree_id, this.db);
+        const env = await createUserProcessEnvironment(worktree.created_by, this.db, worktreeEnv);
 
         // Execute down command
         await new Promise<void>((resolve, reject) => {
@@ -791,7 +916,8 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
       console.warn('⚠️  This is a destructive operation!');
 
       // Create clean environment for user process (filters Agor-internal vars like NODE_ENV)
-      const env = await createUserProcessEnvironment(worktree.created_by, this.db);
+      const worktreeEnv = await resolveWorktreeEnvironment(worktree.worktree_id, this.db);
+      const env = await createUserProcessEnvironment(worktree.created_by, this.db, worktreeEnv);
 
       // Execute nuke command
       await new Promise<void>((resolve, reject) => {
@@ -981,7 +1107,8 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
    */
   async getVSCodeTarget(id: WorktreeID, params?: WorktreeParams): Promise<VSCodeOpenResult> {
     const worktree = await this.get(id, params);
-    const vscodeConfig = this.config.ide?.vscode;
+    const { ide } = this.getLatestConfig();
+    const vscodeConfig = ide?.vscode;
     const currentUserId = (params as WorktreeParams & { user?: { user_id?: UserID } })?.user
       ?.user_id;
     const userSshConfig = currentUserId
@@ -1162,7 +1289,8 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
     params?: WorktreeParams
   ): Promise<CodeServerOpenResult> {
     const worktree = await this.get(id, params);
-    const codeServerConfig = this.config.ide?.code_server;
+    const { ide } = this.getLatestConfig();
+    const codeServerConfig = ide?.code_server;
 
     if (codeServerConfig?.enabled === false) {
       return {

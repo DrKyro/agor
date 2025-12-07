@@ -17,6 +17,8 @@ export type WorktreeUpdate = Omit<
   issue_url?: string | null | undefined;
   pull_request_url?: string | null | undefined;
   notes?: string | null | undefined;
+  /** Raw .env text for worktree-scoped environment variables */
+  env_vars_text?: string;
 };
 
 interface GeneralTabProps {

@@ -433,16 +433,38 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
   /**
    * Custom method: Import environment config from .agor.yml
    */
-  async importFromAgorYml(id: string, _data: unknown, params?: RepoParams): Promise<Repo> {
+  async importFromAgorYml(
+    id: string,
+    data: { worktree_id?: string },
+    params?: RepoParams
+  ): Promise<Repo> {
     const repo = await this.get(id, params);
-    const agorYmlPath = path.join(repo.local_path, '.agor.yml');
+
+    let agorYmlPath: string;
+
+    // Try to read from worktree directory first (if worktree_id provided)
+    if (data?.worktree_id) {
+      console.log('[DEBUG] Getting worktree:', data.worktree_id);
+      const worktree = await this.app.service('worktrees').get(data.worktree_id);
+      agorYmlPath = path.join(worktree.path, '.agor.yml');
+      console.log('[DEBUG] Reading from worktree .agor.yml:', agorYmlPath);
+    } else {
+      // Fall back to repo root
+      agorYmlPath = path.join(repo.local_path, '.agor.yml');
+      console.log('[DEBUG] Reading from repo root .agor.yml:', agorYmlPath);
+    }
 
     // Parse .agor.yml
     const config = parseAgorYml(agorYmlPath);
 
+    console.log('[DEBUG] Parsed .agor.yml config:', JSON.stringify(config, null, 2));
+    console.log('[DEBUG] config is null?', !config);
+
     if (!config) {
       throw new Error('.agor.yml not found or has no environment configuration');
     }
+
+    console.log('[DEBUG] Importing config for repo:', repo.slug);
 
     // Update repo with imported config
     return this.patch(id, { environment_config: config }, params) as Promise<Repo>;

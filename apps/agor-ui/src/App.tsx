@@ -723,7 +723,9 @@ function AppContent() {
     try {
       // Cast to Partial<Worktree> to satisfy Feathers type checking
       // The backend MCP handler properly handles null values for clearing fields
-      await client.service('worktrees').patch(worktreeId, updates as Partial<Worktree>);
+      const _result = await client
+        .service('worktrees')
+        .patch(worktreeId, updates as Partial<Worktree>);
       showSuccess('Worktree updated successfully!');
     } catch (error) {
       showError(

@@ -42,6 +42,7 @@ export interface AgorYmlSchema {
  * @throws Error if file exists but has invalid YAML or schema
  */
 export function parseAgorYml(filePath: string): RepoEnvironmentConfig | null {
+  console.log(`Parsing .agor.yml from ${filePath}`);
   // Check if file exists
   if (!fs.existsSync(filePath)) {
     return null;
@@ -49,11 +50,12 @@ export function parseAgorYml(filePath: string): RepoEnvironmentConfig | null {
 
   // Read file
   const content = fs.readFileSync(filePath, 'utf-8');
-
+  console.log(`Parsing YAML from ${filePath}`);
   // Parse YAML
   let parsed: unknown;
   try {
     parsed = yaml.load(content);
+    console.log(`parsed content: ${JSON.stringify(parsed, null, 2)}`);
   } catch (error) {
     throw new Error(
       `Invalid YAML syntax in .agor.yml: ${error instanceof Error ? error.message : String(error)}`
@@ -73,7 +75,8 @@ export function parseAgorYml(filePath: string): RepoEnvironmentConfig | null {
   }
 
   const env = schema.environment;
-
+  console.log(`Parsed .agor.yml from ${filePath}`);
+  console.log(`RepoEnvironmentConfig: ${JSON.stringify(env, null, 2)}`);
   // Validate required fields
   if (!env.start || !env.stop) {
     throw new Error('.agor.yml environment config must have "start" and "stop" commands');

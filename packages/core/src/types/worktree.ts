@@ -190,6 +190,20 @@ export interface Worktree {
    */
   environment_instance?: WorktreeEnvironmentInstance;
 
+  /**
+   * Worktree-scoped environment variables (plaintext, returned only when explicitly requested)
+   * Used by UI to prefill .env text area.
+   */
+  env_vars_text?: string;
+
+  /**
+   * Worktree-scoped environment variables (status only, values encrypted at rest)
+   *
+   * - Only applies to this worktree's environment commands
+   * - Overrides user-level env vars when injected into start/stop/nuke
+   */
+  env_vars?: Record<string, boolean>;
+
   // ===== Sessions =====
 
   /**

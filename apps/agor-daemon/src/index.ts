@@ -1409,10 +1409,7 @@ async function main() {
   });
 
   // Register config service for API key management
-  const configService = createConfigService(db);
-  // Store app reference for service method access
-  // biome-ignore lint/suspicious/noExplicitAny: Service needs app reference for cross-service calls
-  (configService as any).app = app;
+  const configService = createConfigService(db, app);
   app.use('/config', configService);
 
   // Register custom method for API key resolution (used by executors)
@@ -3925,10 +3922,17 @@ async function main() {
     app,
     '/repos/:id/import-agor-yml',
     {
-      async create(_data: unknown, params: RouteParams) {
+      async create(data: { worktree_id?: string }, params: RouteParams) {
+        console.log('[DEBUG] /repos/:id/import-agor-yml route called');
+        console.log('[DEBUG] Request body data:', JSON.stringify(data));
         const id = params.route?.id;
+        console.log('[DEBUG] Repo ID from route:', id);
         if (!id) throw new Error('Repo ID required');
-        return reposService.importFromAgorYml(id, {}, params);
+        console.log(
+          '[DEBUG] Calling reposService.importFromAgorYml with worktree_id:',
+          data?.worktree_id
+        );
+        return reposService.importFromAgorYml(id, data, params);
       },
     },
     {

@@ -13,6 +13,10 @@ import { type WorktreeInsert, type WorktreeRow, worktreeOwners, worktrees } from
 import { AmbiguousIdError, type BaseRepository, EntityNotFoundError } from './base';
 import { deepMerge } from './merge-utils';
 
+type WorktreeData = WorktreeRow['data'] & {
+  env_vars?: Record<string, string>;
+};
+
 /**
  * Worktree repository implementation
  */
@@ -23,7 +27,20 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
    * Convert database row to Worktree type
    */
   private rowToWorktree(row: WorktreeRow): Worktree {
-    return {
+    const { env_vars: encryptedEnvVars, ...data } = (row.data || {}) as WorktreeData;
+    const envVarsStatus =
+      encryptedEnvVars && Object.keys(encryptedEnvVars).length > 0
+        ? Object.fromEntries(Object.keys(encryptedEnvVars).map((key) => [key, true]))
+        : undefined;
+
+    console.log('[rowToWorktree] Converting row to Worktree:', {
+      id: row.worktree_id.substring(0, 8),
+      name: row.name,
+      hasEnvVarsTextInRow: row.env_vars_text !== undefined,
+      envVarsTextLength: row.env_vars_text?.length || 0,
+    });
+
+    const result = {
       worktree_id: row.worktree_id as WorktreeID,
       repo_id: row.repo_id as UUID,
       created_at: new Date(row.created_at).toISOString(),
@@ -55,14 +72,27 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
       others_can: row.others_can ?? undefined,
       others_fs_access: row.others_fs_access ?? undefined,
       unix_group: row.unix_group ?? undefined,
-      ...row.data,
+      ...data,
+      env_vars: envVarsStatus,
+      env_vars_text: row.env_vars_text ?? undefined, // Worktree environment variables (plaintext) - must be last to avoid being overwritten
     };
+
+    console.log('[rowToWorktree] Conversion result:', {
+      id: result.worktree_id.substring(0, 8),
+      hasEnvVarsText: result.env_vars_text !== undefined,
+      envVarsTextLength: result.env_vars_text?.length || 0,
+    });
+
+    return result;
   }
 
   /**
    * Convert Worktree to database insert format
    */
-  private worktreeToInsert(worktree: Partial<Worktree>): WorktreeInsert {
+  private worktreeToInsert(
+    worktree: Partial<Worktree>,
+    encryptedEnvVars?: Record<string, string>
+  ): WorktreeInsert {
     const now = Date.now();
     const worktreeId = worktree.worktree_id ?? (generateId() as WorktreeID);
 
@@ -83,6 +113,8 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
       health_check_url: worktree.health_check_url ?? null,
       app_url: worktree.app_url ?? null,
       logs_command: worktree.logs_command ?? null,
+      // Worktree environment variables (plaintext, for UI display)
+      env_vars_text: worktree.env_vars_text ?? null,
       // Explicitly convert undefined to null for Drizzle (undefined values are ignored in set())
       board_id: worktree.board_id === undefined ? null : worktree.board_id || null,
       schedule_enabled: worktree.schedule_enabled ?? false,
@@ -112,6 +144,7 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
         last_used: worktree.last_used ?? new Date(now).toISOString(),
         custom_context: worktree.custom_context,
         schedule: worktree.schedule,
+        env_vars: encryptedEnvVars,
       },
     };
   }
@@ -207,18 +240,32 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
       }
 
       const current = this.rowToWorktree(currentRow);
+      const currentEncryptedEnvVars = (currentRow.data as WorktreeData)?.env_vars;
+
+      const updatesWithEnv = updates as Partial<Worktree> & {
+        _encrypted_env_vars?: Record<string, string>;
+      };
+      const nextEncryptedEnvVars =
+        updatesWithEnv._encrypted_env_vars === undefined
+          ? currentEncryptedEnvVars
+          : updatesWithEnv._encrypted_env_vars;
+
+      const sanitizedUpdates: Partial<Worktree> & {
+        _encrypted_env_vars?: Record<string, string>;
+      } = { ...updates };
+      delete sanitizedUpdates._encrypted_env_vars;
 
       // STEP 3: Deep merge updates into current worktree (in memory)
       // Preserves nested objects like schedule, environment_instance, custom_context
       const merged = deepMerge(current, {
-        ...updates,
+        ...sanitizedUpdates,
         worktree_id: current.worktree_id, // Never change ID
         repo_id: current.repo_id, // Never change repo
         created_at: current.created_at, // Never change created timestamp
         updated_at: new Date().toISOString(), // Always update timestamp
       });
 
-      const insertData = this.worktreeToInsert(merged);
+      const insertData = this.worktreeToInsert(merged, nextEncryptedEnvVars);
 
       // STEP 4: Write merged worktree (within same transaction)
       // biome-ignore lint/suspicious/noExplicitAny: Transaction context requires type assertion for database wrapper functions

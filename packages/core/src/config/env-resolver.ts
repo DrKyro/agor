@@ -2,8 +2,8 @@ import { eq } from 'drizzle-orm';
 import type { Database } from '../db/client';
 import { select } from '../db/database-wrapper';
 import { decryptApiKey } from '../db/encryption';
-import { users } from '../db/schema';
-import type { UserID } from '../types';
+import { users, worktrees } from '../db/schema';
+import type { UserID, WorktreeID } from '../types';
 
 /**
  * Environment variables used internally by Agor daemon that should NOT be passed
@@ -85,6 +85,44 @@ export async function resolveUserEnvironment(
     }
   } catch (err) {
     console.error(`Failed to resolve environment for user ${userId}:`, err);
+  }
+
+  return env;
+}
+
+/**
+ * Resolve worktree-scoped environment variables (decrypted from database)
+ */
+export async function resolveWorktreeEnvironment(
+  worktreeId: WorktreeID,
+  db: Database
+): Promise<Record<string, string>> {
+  const env: Record<string, string> = {};
+
+  try {
+    const row = await select(db).from(worktrees).where(eq(worktrees.worktree_id, worktreeId)).one();
+
+    if (row?.data && typeof row.data === 'object') {
+      const data = row.data as {
+        env_vars?: Record<string, string>;
+      };
+
+      const encryptedVars = data.env_vars;
+      if (encryptedVars) {
+        for (const [key, encryptedValue] of Object.entries(encryptedVars)) {
+          try {
+            const decryptedValue = decryptApiKey(encryptedValue);
+            if (decryptedValue && decryptedValue.trim() !== '') {
+              env[key] = decryptedValue;
+            }
+          } catch (err) {
+            console.error(`Failed to decrypt worktree env var ${key} for ${worktreeId}:`, err);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`Failed to resolve environment for worktree ${worktreeId}:`, err);
   }
 
   return env;
