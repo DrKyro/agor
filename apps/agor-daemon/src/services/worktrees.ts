@@ -1174,14 +1174,24 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
     globalRemote: AgorIDESSHSettings | undefined,
     userSsh?: UserSSHConfig
   ): AgorIDESSHSettings | undefined {
+    const userOverrides =
+      userSsh?.host !== undefined ||
+      userSsh?.port !== undefined ||
+      userSsh?.user !== undefined ||
+      userSsh?.target !== undefined;
+
     const merged: AgorIDESSHSettings = {
       host: userSsh?.host ?? globalRemote?.host,
       port: userSsh?.port ?? globalRemote?.port,
       user: userSsh?.user ?? globalRemote?.user,
-      target: userSsh?.target ?? globalRemote?.target,
+      target: userOverrides ? userSsh?.target || undefined : globalRemote?.target,
     };
 
-    const hasValue = merged.host || merged.port || merged.user || merged.target;
+    const hasValue =
+      merged.host !== undefined ||
+      merged.port !== undefined ||
+      merged.user !== undefined ||
+      merged.target !== undefined;
     return hasValue ? merged : undefined;
   }
 
@@ -1269,7 +1279,7 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
         ? remote.target.trim()
         : `${user}@${host}${port !== 22 ? `:${port}` : ''}`;
 
-    const uri = `vscode://vscode-remote/ssh-remote+${encodeURIComponent(targetLabel)}${pathSuffix}`;
+    const uri = `vscode://vscode-remote/ssh-remote+${targetLabel}${pathSuffix}`;
     const sshCommand = port === 22 ? `ssh ${user}@${host}` : `ssh -p ${port} ${user}@${host}`;
 
     return {
