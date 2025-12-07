@@ -49,7 +49,7 @@ RUN ZELLIJ_VERSION=0.43.1 && \
   zellij --version
 
 # Install GitHub CLI (gh) - download pre-built binary
-RUN curl -fsSL "$(curl -s https://api.github.com/repos/cli/cli/releases/latest | grep 'browser_download_url.*linux_amd64.tar.gz"' | cut -d'"' -f4)" | \
+RUN curl -fsSL "$(curl -s https://api.github.com/repos/cli/cli/releases/latest | jq -r '.assets[] | select(.name | contains("linux_amd64.tar.gz")) | .browser_download_url')" | \
   tar -xz -C /tmp && \
   mv /tmp/gh_*/bin/gh /usr/local/bin/ && \
   rm -rf /tmp/gh_*
