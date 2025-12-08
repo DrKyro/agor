@@ -333,6 +333,8 @@ export const App: React.FC<AppProps> = ({
     enabled: !eventStreamPanelCollapsed,
   });
 
+  const rightPanelVisible = selectedSessionId || !eventStreamPanelCollapsed;
+
   const handleOpenTerminal = useCallback((commands: string[] = [], worktreeId?: string) => {
     setTerminalCommands(commands);
     setTerminalWorktreeId(worktreeId);
@@ -656,6 +658,8 @@ export const App: React.FC<AppProps> = ({
               }}
             >
               <Panel
+                id="comments-panel"
+                order={1}
                 ref={commentsPanelRef}
                 collapsible
                 defaultSize={commentsPanelCollapsed ? 0 : commentsPanelSize}
@@ -708,6 +712,8 @@ export const App: React.FC<AppProps> = ({
                 }}
               />
               <Panel
+                id="board-panel"
+                order={2}
                 defaultSize={commentsPanelCollapsed ? 100 : 100 - commentsPanelSize}
                 minSize={40}
               >
@@ -717,13 +723,15 @@ export const App: React.FC<AppProps> = ({
                   style={{ flex: 1 }}
                   onLayout={(sizes) => {
                     // Save right panel size when user resizes (only when panel is open)
-                    if (selectedSessionId && sizes.length === 2) {
+                    if (rightPanelVisible && sizes.length === 2) {
                       setSessionPanelSize(sizes[1]);
                     }
                   }}
                 >
                   <Panel
-                    defaultSize={selectedSessionId ? 100 - sessionPanelSize : 100}
+                    id="canvas-panel"
+                    order={1}
+                    defaultSize={rightPanelVisible ? 100 - sessionPanelSize : 100}
                     minSize={20}
                   >
                     <div style={{ position: 'relative', overflow: 'hidden', height: '100%' }}>
@@ -788,7 +796,7 @@ export const App: React.FC<AppProps> = ({
                       />
                     </div>
                   </Panel>
-                  {(selectedSessionId || !eventStreamPanelCollapsed) && (
+                  {rightPanelVisible && (
                     <>
                       <PanelResizeHandle
                         style={{
@@ -806,7 +814,13 @@ export const App: React.FC<AppProps> = ({
                             'var(--ant-color-border-secondary)';
                         }}
                       />
-                      <Panel defaultSize={sessionPanelSize} minSize={25} maxSize={75}>
+                      <Panel
+                        id="session-panel"
+                        order={2}
+                        defaultSize={sessionPanelSize}
+                        minSize={25}
+                        maxSize={75}
+                      >
                         {selectedSessionId ? (
                           <SessionPanel
                             client={client}
