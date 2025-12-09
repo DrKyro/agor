@@ -1540,6 +1540,85 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
       };
     }
   }
+
+  /**
+   * Custom method: Get git diff between two refs
+   */
+  async getDiff(
+    id: WorktreeID,
+    params?: WorktreeParams & {
+      query: {
+        from?: string;
+        to?: string;
+        file?: string;
+      };
+    }
+  ): Promise<{
+    diff: {
+      files: Array<{
+        path: string;
+        status: 'added' | 'modified' | 'deleted' | 'renamed';
+        additions: number;
+        deletions: number;
+        isBinary: boolean;
+        oldPath?: string;
+      }>;
+      summary: {
+        total: number;
+        additions: number;
+        deletions: number;
+      };
+    };
+    availableRefs?: {
+      branches: string[];
+      tags: string[];
+      currentBranch?: string;
+    };
+  }> {
+    const worktree = await this.get(id, params);
+
+    // Get query parameters
+    const { from, to, file } = params?.query || {};
+
+    // Import git utils
+    const { getWorktreeDiff, getAvailableRefs } = await import('@agor/core/git');
+
+    try {
+      // Default: compare base_ref (or HEAD if not available) with current ref
+      const fromRef = from || worktree.base_ref || 'HEAD';
+      const toRef = to || worktree.ref;
+
+      console.log(`🔍 Getting diff for worktree ${worktree.name}: ${fromRef}..${toRef}`);
+
+      // Get diff result
+      const diffResult = await getWorktreeDiff(worktree.path, fromRef, toRef, file);
+
+      // Get available refs for UI reference selector
+      let availableRefs;
+      try {
+        // Need repo path to get refs
+        const repo = (await this.app.service('repos').get(worktree.repo_id, params)) as Repo;
+        availableRefs = await getAvailableRefs(repo.local_path);
+      } catch (error) {
+        console.warn('Failed to get available refs:', error);
+        // Continue without refs - not critical
+      }
+
+      return {
+        diff: diffResult,
+        availableRefs,
+      };
+    } catch (error) {
+      console.error(
+        `❌ Failed to get diff for worktree ${worktree.name}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+
+      throw new Error(
+        `Failed to get diff: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 }
 
 /**

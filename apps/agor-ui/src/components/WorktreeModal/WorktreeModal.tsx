@@ -15,6 +15,7 @@ import { EnvironmentTab } from './tabs/EnvironmentTab';
 import { FilesTab } from './tabs/FilesTab';
 import { GeneralTab, type WorktreeUpdate } from './tabs/GeneralTab';
 import { ScheduleTab } from './tabs/ScheduleTab';
+import { DiffTab } from './tabs/DiffTab';
 
 export interface WorktreeModalProps {
   open: boolean;
@@ -111,6 +112,11 @@ export const WorktreeModal: React.FC<WorktreeModalProps> = ({
             key: 'files',
             label: 'Files',
             children: <FilesTab worktree={worktree} client={client} />,
+          },
+          {
+            key: 'diff',
+            label: 'Diff',
+            children: <DiffTab worktree={worktree} repo={repo} client={client} />,
           },
           {
             key: 'schedule',
