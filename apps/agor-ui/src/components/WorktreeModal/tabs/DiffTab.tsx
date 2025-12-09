@@ -34,6 +34,11 @@ interface DiffState {
 }
 
 export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
+  // Early return for client check (before hooks to follow Rules of Hooks)
+  if (!client) {
+    return <div className="p-4">Client not available</div>;
+  }
+
   const [state, setState] = useState<DiffState>({
     fromRef: worktree.base_ref || 'HEAD',
     toRef: worktree.ref,
@@ -49,11 +54,6 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
    * Load diff from the API
    */
   const loadDiff = useCallback(async (from?: string, to?: string) => {
-    if (!client) {
-      setState((prev) => ({ ...prev, error: 'No client available', loading: false }));
-      return;
-    }
-
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
@@ -168,10 +168,6 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
   useEffect(() => {
     loadDiff();
   }, [loadDiff, worktree.worktree_id]);
-
-  if (!client) {
-    return <div className="p-4">Client not available</div>;
-  }
 
   return (
     <div style={{ padding: '16px' }}>
