@@ -4040,6 +4040,26 @@ async function main() {
     requireAuth
   );
 
+  // POST /worktrees/:id/install - Run install command manually
+  registerAuthenticatedRoute(
+    app,
+    '/worktrees/:id/install',
+    {
+      async create(_data: unknown, params: RouteParams) {
+        const id = params.route?.id;
+        if (!id) throw new Error('Worktree ID required');
+        return worktreesService.installDependencies(
+          id as import('@agor/core/types').WorktreeID,
+          params
+        );
+      },
+    },
+    {
+      create: { role: 'admin', action: 'install worktree dependencies' },
+    },
+    requireAuth
+  );
+
   // POST /worktrees/:id/stop - Stop environment
   registerAuthenticatedRoute(
     app,

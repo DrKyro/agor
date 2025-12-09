@@ -64,6 +64,13 @@
       "when": 1765114599880,
       "tag": "0008_tiresome_ultragirl",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1765200000000,
+      "tag": "0009_add_install_command",
+      "breakpoints": true
     }
   ]
 }

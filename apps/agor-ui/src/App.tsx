@@ -85,7 +85,7 @@ function DeviceRouter() {
 function AppContent() {
   const { token } = theme.useToken();
   const { getCurrentThemeConfig } = useTheme();
-  const { showSuccess, showError, showLoading, showWarning, destroy } = useThemedMessage();
+  const { showSuccess, showError, showLoading, showWarning } = useThemedMessage();
 
   // Fetch daemon auth configuration
   const {
@@ -766,8 +766,8 @@ function AppContent() {
         position: data.position, // Optional: position on board (defaults to center of viewport)
       })) as Worktree;
 
-      // Dismiss loading message - worktree will appear on board via WebSocket broadcast
-      destroy('create-worktree');
+      // Replace loading with success – worktree will appear via WebSocket
+      showSuccess('Worktree created!', { key: 'create-worktree' });
       return worktree;
     } catch (error) {
       showError(
@@ -821,6 +821,21 @@ function AppContent() {
     }
   };
 
+  // Run install command manually
+  const handleInstallDependencies = async (worktreeId: string) => {
+    if (!client) return;
+    try {
+      showLoading('Installing dependencies...', { key: 'install-deps' });
+      await client.service(`worktrees/${worktreeId}/install`).create({});
+      showSuccess('Dependencies installed!', { key: 'install-deps' });
+    } catch (error) {
+      showError(
+        `Failed to install dependencies: ${error instanceof Error ? error.message : String(error)}`,
+        { key: 'install-deps' }
+      );
+    }
+  };
+
   const handleOpenVSCode = async (worktreeId: string) => {
     if (!client) return;
     const key = `open-vscode-${worktreeId}`;
@@ -828,7 +843,7 @@ function AppContent() {
       showLoading('正在准备 VS Code 连接...', { key });
       const result = await client.service('worktrees-open-vscode').create({ worktreeId });
 
-      if (!result || !result.enabled || !result.uri) {
+      if (!result || !result.enabled) {
         const reason = result?.reason || 'VS Code 集成尚未配置';
         showError(reason, { key });
         return;
@@ -845,12 +860,14 @@ function AppContent() {
         document.body.removeChild(anchor);
       };
 
-      const uriWithNewWindow = result.uri
-        ? `${result.uri}${result.uri.includes('?') ? '&' : '?'}windowId=agor-${Date.now()}`
-        : undefined;
-
-      if (uriWithNewWindow) {
-        openLink(uriWithNewWindow);
+      // If daemon already launched VS Code via CLI, we skip deep link
+      if (!result.launchedCli) {
+        const uriWithNewWindow = result.uri
+          ? `${result.uri}${result.uri.includes('?') ? '&' : '?'}windowId=agor-${Date.now()}`
+          : undefined;
+        if (uriWithNewWindow) {
+          openLink(uriWithNewWindow);
+        }
       }
 
       const successMessage =
@@ -858,7 +875,9 @@ function AppContent() {
           ? 'VS Code Remote SSH 已触发'
           : result.mode === 'tunnel'
             ? 'VS Code Tunnel 已触发'
-            : 'VS Code 正在本地打开该工作树';
+            : result.launchedCli
+              ? '已通过本地 CLI 打开 VS Code'
+              : 'VS Code 正在本地打开该工作树';
       showSuccess(successMessage, { key });
 
       if (result.reason) {
@@ -1147,6 +1166,7 @@ function AppContent() {
                 onStartEnvironment={handleStartEnvironment}
                 onStopEnvironment={handleStopEnvironment}
                 onNukeEnvironment={handleNukeEnvironment}
+                onInstallDependencies={handleInstallDependencies}
                 onCreateUser={handleCreateUser}
                 onUpdateUser={handleUpdateUser}
                 onDeleteUser={handleDeleteUser}
@@ -1218,6 +1238,7 @@ function AppContent() {
                 onStartEnvironment={handleStartEnvironment}
                 onStopEnvironment={handleStopEnvironment}
                 onNukeEnvironment={handleNukeEnvironment}
+                onInstallDependencies={handleInstallDependencies}
                 onCreateUser={handleCreateUser}
                 onUpdateUser={handleUpdateUser}
                 onDeleteUser={handleDeleteUser}
@@ -1289,6 +1310,7 @@ function AppContent() {
                 onStartEnvironment={handleStartEnvironment}
                 onStopEnvironment={handleStopEnvironment}
                 onNukeEnvironment={handleNukeEnvironment}
+                onInstallDependencies={handleInstallDependencies}
                 onCreateUser={handleCreateUser}
                 onUpdateUser={handleUpdateUser}
                 onDeleteUser={handleDeleteUser}

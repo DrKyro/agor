@@ -775,6 +775,45 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
   }
 
   /**
+   * Custom method: Run install command now (manual trigger)
+   */
+  async installDependencies(id: WorktreeID, params?: WorktreeParams): Promise<Worktree> {
+    const worktree = await this.get(id, params);
+
+    if (!worktree.install_command) {
+      throw new Error('No install command configured for this worktree');
+    }
+
+    const command = worktree.install_command;
+    console.log(`📦 Installing dependencies for worktree ${worktree.name}: ${command}`);
+
+    // Create clean environment for user process
+    const worktreeEnv = await resolveWorktreeEnvironment(worktree.worktree_id, this.db);
+    const env = await createUserProcessEnvironment(worktree.created_by, this.db, worktreeEnv);
+
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command, {
+        cwd: worktree.path,
+        shell: true,
+        stdio: 'inherit',
+        env,
+      });
+      child.on('exit', (code) => {
+        if (code === 0) {
+          console.log(`✅ Install completed for ${worktree.name}`);
+          resolve();
+        } else {
+          reject(new Error(`Install command exited with code ${code}`));
+        }
+      });
+      child.on('error', reject);
+    });
+
+    // No status change, just bump updated_at
+    return (await this.patch(id, { updated_at: new Date().toISOString() }, params)) as Worktree;
+  }
+
+  /**
    * Custom method: Stop environment
    */
   async stopEnvironment(id: WorktreeID, params?: WorktreeParams): Promise<Worktree> {
@@ -1147,12 +1186,58 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
           }
         }
       } else if (mode === 'local') {
+        const strategy = vscodeConfig?.local_open_strategy || 'cli';
+        if (strategy === 'cli') {
+          const cliLaunched = await this.tryLaunchVSCodeCLI(worktree.path, currentUserId);
+          if (cliLaunched) {
+            return {
+              enabled: true,
+              mode: 'local',
+              launchedCli: true,
+              reason: fallbackReason,
+            };
+          }
+          // If CLI launch fails, fall through to deeplink with reason
+          const reason =
+            fallbackReason || '无法通过本地 CLI 启动 VS Code，已回退为 vscode://file Deep Link';
+          return this.buildLocalVSCodeResult(worktree.path, reason);
+        }
+        // When strategy is deeplink or unspecified fallback
         return this.buildLocalVSCodeResult(worktree.path, fallbackReason);
       }
     }
 
     // Final fallback: local open
     return this.buildLocalVSCodeResult(worktree.path, fallbackReason);
+  }
+
+  /**
+   * Try to launch local VS Code via CLI: `code -n <path>`
+   * Returns true if the spawn call succeeded (best-effort, non-blocking)
+   */
+  private async tryLaunchVSCodeCLI(path: string, userId?: UserID): Promise<boolean> {
+    try {
+      const env = await createUserProcessEnvironment(userId, this.db);
+      const bin = process.platform === 'win32' ? 'code.cmd' : 'code';
+      const child = spawn(bin, ['-n', path], {
+        env,
+        stdio: 'ignore',
+        detached: false,
+        shell: false,
+      });
+
+      // If spawn throws synchronously it will go to catch. Here we
+      // assume success if we got a ChildProcess instance.
+      // We avoid waiting for exit; VS Code typically daemonizes.
+      // Guard against immediate error events without failing the request.
+      child.on('error', (err) => {
+        console.warn(`[WorktreesService] Failed to launch VS Code CLI: ${String(err)}`);
+      });
+      return true;
+    } catch (err) {
+      console.warn('[WorktreesService] VS Code CLI not available, fallback to deeplink:', err);
+      return false;
+    }
   }
 
   /**

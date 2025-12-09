@@ -64,6 +64,7 @@ export const SessionPanelContent: React.FC<SessionPanelContentProps> = ({
   // Get actions from context
   const {
     onOpenWorktree,
+    onInstallDependencies,
     onStartEnvironment,
     onStopEnvironment,
     onViewLogs,
@@ -101,6 +102,7 @@ export const SessionPanelContent: React.FC<SessionPanelContentProps> = ({
                 repo={repo}
                 worktree={worktree}
                 onEdit={onOpenWorktree ? () => onOpenWorktree(worktree.worktree_id) : undefined}
+                onInstallDependencies={onInstallDependencies}
                 onStartEnvironment={onStartEnvironment}
                 onStopEnvironment={onStopEnvironment}
                 onViewLogs={onViewLogs}

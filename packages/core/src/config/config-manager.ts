@@ -113,6 +113,7 @@ export function getDefaultConfig(): AgorConfig {
       vscode: {
         enabled: true,
         preferred_mode: 'remote-ssh',
+        local_open_strategy: 'cli',
       },
       code_server: {
         enabled: false,

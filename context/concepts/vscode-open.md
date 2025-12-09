@@ -8,7 +8,7 @@
 - 单击即可把对应 Worktree 目录通过 VS Code 打开。
 - 支持三种模式：Remote SSH、VS Code Tunnel、Local。
 - 默认优先使用 Remote SSH（避免隧道中转延迟）；若配置缺失则自动按优先级回退。
-- 如果未配置远程信息，则退回使用本地 `vscode://file` Deep Link。
+- 如果未配置远程信息，则退回使用本地打开：默认通过 CLI 运行 `code <path>`；如 CLI 不可用，则退回使用 `vscode://file` Deep Link。
 - 新增浏览器端 `code-server` 打开入口，可通过 URL 模板生成链接。
 
 ## 配置入口速查
@@ -26,6 +26,10 @@ ide:
   vscode:
     enabled: true            # 默认 true，可在需要时关闭入口按钮
     preferred_mode: remote-ssh  # 默认优先 Remote SSH，可选 tunnel / remote-ssh / local
+    # 当模式解析为 local 时的打开方式（默认 cli）：
+    # - cli: 通过本机 CLI 执行 `code -n <path>`
+    # - deeplink: 通过 `vscode://file/<path>` Deep Link 交给前端触发
+    local_open_strategy: cli
     remote:
       host: my-server.com    # 远程 SSH Host（必填，否则走本地模式）
       port: 22               # 选填，默认 22
@@ -45,7 +49,7 @@ ide:
    - **优先顺序（可配置）：preferred_mode → 其他模式。**
      - `preferred_mode: remote-ssh`（默认）：优先生成 `vscode://vscode-remote/ssh-remote+<target>/<path>`。
      - 若配置了 Tunnel 且将 `preferred_mode` 设为 `tunnel`，会生成 `vscode://vscode-remote/tunnel+<name>/<path>`（符合 remote authority 规范，前端再追加 `windowId` 保证新窗口）。
-     - 以上条件都缺失时，回退到 `vscode://file/<path>` 并在结果中附带 `reason`，提醒处于本地模式。
+     - 以上条件都缺失时，回退到本地模式：优先尝试 `code -n <path>`，若失败则返回 `vscode://file/<path>` 并在结果中附带 `reason`。
    - 新增 `getCodeServerTarget(worktreeId)`：按 `ide.code_server.url_template` 渲染出浏览器端 code-server 链接。
 
 3. `apps/agor-daemon/src/index.ts`
@@ -59,7 +63,9 @@ ide:
 
 1. `App.tsx`
 
-   - `handleOpenVSCode(worktreeId)` 调用上述 service，并根据返回 `uri` 创建隐藏 `<a>` 标签触发 deep link。
+   - `handleOpenVSCode(worktreeId)` 调用上述 service：
+     - 若返回 `launchedCli=true`，表示后端已通过本地 CLI 启动 VS Code，前端不再触发 deep link，仅提示成功；
+     - 否则根据返回的 `uri` 创建隐藏 `<a>` 标签触发 deep link。
    - 根据 `mode` 展示 toast，如 `remote-ssh` 时提示 “VS Code Remote SSH 已触发”，`local` 时提示 “VS Code 正在本地打开工作树”。
    - 始终追加唯一 `windowId`，确保 VS Code 打开新窗口，不会覆盖当前工程。
    - 新增 `handleOpenCodeServer(worktreeId)` 调用 `/worktrees-open-codeserver` 并在浏览器中打开生成的 URL。

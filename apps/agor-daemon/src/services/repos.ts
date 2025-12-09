@@ -5,14 +5,17 @@
  * Uses DrizzleService adapter with RepoRepository.
  */
 
+import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
+  createUserProcessEnvironment,
   extractSlugFromUrl,
   isValidGitUrl,
   isValidSlug,
   parseAgorYml,
   resolveUserEnvironment,
+  resolveWorktreeEnvironment,
   writeAgorYml,
 } from '@agor/core/config';
 import { type Database, RepoRepository, WorktreeRepository } from '@agor/core/db';
@@ -323,6 +326,7 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
     let start_command: string | undefined;
     let stop_command: string | undefined;
     let nuke_command: string | undefined;
+    let install_command: string | undefined;
     let health_check_url: string | undefined;
     let app_url: string | undefined;
     let logs_command: string | undefined;
@@ -360,6 +364,10 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
         ? safeRenderTemplate(repo.environment_config.nuke_command, 'nuke_command')
         : undefined;
 
+      install_command = repo.environment_config.install_command
+        ? safeRenderTemplate(repo.environment_config.install_command, 'install_command')
+        : undefined;
+
       health_check_url = repo.environment_config.health_check?.url_template
         ? safeRenderTemplate(repo.environment_config.health_check.url_template, 'health_check_url')
         : undefined;
@@ -386,6 +394,7 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
         start_command,
         stop_command,
         nuke_command,
+        install_command,
         health_check_url,
         app_url,
         logs_command,
@@ -425,6 +434,36 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
         },
         params
       );
+    }
+
+    // Post-create: run install command asynchronously (best-effort)
+    if (install_command) {
+      try {
+        const worktreeEnv = await resolveWorktreeEnvironment(worktree.worktree_id, this.db);
+        const env = await createUserProcessEnvironment(worktree.created_by, this.db, worktreeEnv);
+
+        console.log(`📦 Installing dependencies for ${worktree.name}: ${install_command}`);
+        const child = spawn(install_command, {
+          cwd: worktree.path,
+          shell: true,
+          stdio: 'inherit',
+          env,
+        });
+        child.on('exit', (code) => {
+          if (code === 0) {
+            console.log(`✅ Install completed for ${worktree.name}`);
+          } else {
+            console.warn(`⚠️  Install exited with code ${code} for ${worktree.name}`);
+          }
+        });
+        child.on('error', (err) => {
+          console.warn(`⚠️  Install failed to start for ${worktree.name}:`, err);
+        });
+      } catch (error) {
+        console.warn(
+          `⚠️  Skipping auto-install for ${worktree.name}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
 
     return worktree;

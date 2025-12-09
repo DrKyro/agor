@@ -27,6 +27,7 @@ export interface AgorYmlSchema {
   environment?: {
     start?: string;
     stop?: string;
+    install?: string;
     nuke?: string;
     health?: string;
     app?: string;
@@ -89,6 +90,10 @@ export function parseAgorYml(filePath: string): RepoEnvironmentConfig | null {
   };
 
   // Add optional fields
+  if (env.install) {
+    config.install_command = env.install;
+  }
+
   if (env.nuke) {
     config.nuke_command = env.nuke;
   }
@@ -123,6 +128,7 @@ export function writeAgorYml(filePath: string, config: RepoEnvironmentConfig): v
     environment: {
       start: config.up_command,
       stop: config.down_command,
+      install: config.install_command,
       nuke: config.nuke_command,
       health: config.health_check?.url_template,
       app: config.app_url_template,
@@ -133,6 +139,7 @@ export function writeAgorYml(filePath: string, config: RepoEnvironmentConfig): v
   // Remove undefined fields for cleaner output
   if (schema.environment) {
     if (!schema.environment.nuke) delete schema.environment.nuke;
+    if (!schema.environment.install) delete schema.environment.install;
     if (!schema.environment.health) delete schema.environment.health;
     if (!schema.environment.app) delete schema.environment.app;
     if (!schema.environment.logs) delete schema.environment.logs;

@@ -13,7 +13,6 @@ import {
   BranchesOutlined,
   CloseOutlined,
   CodeOutlined,
-  CodeSandboxOutlined,
   DeleteOutlined,
   ForkOutlined,
   GlobalOutlined,
@@ -46,6 +45,7 @@ import {
 } from '../Pill';
 import { ThinkingModeSelector } from '../ThinkingModeSelector';
 import { ToolIcon } from '../ToolIcon';
+import { VSCodeIcon } from '../VSCodeIcon';
 import { SessionPanelContent } from './SessionPanelContent';
 
 // Re-export PermissionMode from SDK for convenience
@@ -766,7 +766,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
               <Tooltip title="Open in VS Code">
                 <Button
                   type="text"
-                  icon={<CodeSandboxOutlined />}
+                  icon={<VSCodeIcon offsetY={1} />}
                   onClick={() => onOpenVSCode(worktree.worktree_id)}
                 />
               </Tooltip>

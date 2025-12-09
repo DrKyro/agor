@@ -116,6 +116,7 @@ export interface AppProps {
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
   onNukeEnvironment?: (worktreeId: string) => void;
+  onInstallDependencies?: (worktreeId: string) => Promise<void> | void;
   onCreateUser?: (data: CreateUserInput) => void;
   onUpdateUser?: (userId: string, updates: UpdateUserInput) => void;
   onDeleteUser?: (userId: string) => void;
@@ -177,6 +178,7 @@ export const App: React.FC<AppProps> = ({
   onStartEnvironment,
   onStopEnvironment,
   onNukeEnvironment,
+  onInstallDependencies,
   onCreateUser,
   onUpdateUser,
   onDeleteUser,
@@ -538,6 +540,7 @@ export const App: React.FC<AppProps> = ({
       onStartEnvironment,
       onStopEnvironment,
       onNukeEnvironment,
+      onInstallDependencies,
       onViewLogs: (worktreeId: string) => setLogsModalWorktreeId(worktreeId),
       onOpenSettings: (sessionId: string) => setSessionSettingsId(sessionId),
       onOpenWorktree: (worktreeId: string) => setWorktreeModalWorktreeId(worktreeId),
@@ -555,6 +558,7 @@ export const App: React.FC<AppProps> = ({
       onStartEnvironment,
       onStopEnvironment,
       onNukeEnvironment,
+      onInstallDependencies,
       onOpenVSCode,
       onOpenCodeServer,
       handleOpenTerminal,

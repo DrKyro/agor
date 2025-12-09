@@ -17,6 +17,7 @@ describe('parseAgorYml', () => {
     const yamlContent = `environment:
   start: "docker compose up -d"
   stop: "docker compose down"
+  install: "pnpm install"
   health: "http://localhost:{{add 9000 worktree.unique_id}}/health"
   app: "http://localhost:{{add 5000 worktree.unique_id}}"
   logs: "docker compose logs --tail=100"`;
@@ -34,6 +35,7 @@ describe('parseAgorYml', () => {
       },
       app_url_template: 'http://localhost:{{add 5000 worktree.unique_id}}',
       logs_command: 'docker compose logs --tail=100',
+      install_command: 'pnpm install',
     });
 
     // Cleanup
@@ -123,6 +125,7 @@ describe('writeAgorYml', () => {
     const config: RepoEnvironmentConfig = {
       up_command: 'docker compose up -d',
       down_command: 'docker compose down',
+      install_command: 'pnpm install',
       health_check: {
         type: 'http',
         url_template: 'http://localhost:9000/health',
@@ -173,6 +176,7 @@ describe('writeAgorYml', () => {
     const originalConfig: RepoEnvironmentConfig = {
       up_command: 'PORT={{add 5000 worktree.unique_id}} pnpm dev',
       down_command: 'pkill -f "vite.*{{add 5000 worktree.unique_id}}"',
+      install_command: 'pnpm i',
       health_check: {
         type: 'http',
         url_template: 'http://localhost:{{add 5000 worktree.unique_id}}/health',

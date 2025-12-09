@@ -117,6 +117,9 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
   const [upCommand, setUpCommand] = useState(repo.environment_config?.up_command || '');
   const [downCommand, setDownCommand] = useState(repo.environment_config?.down_command || '');
   const [nukeCommand, setNukeCommand] = useState(repo.environment_config?.nuke_command || '');
+  const [installCommand, setInstallCommand] = useState(
+    repo.environment_config?.install_command || ''
+  );
   const [healthCheckUrlTemplate, setHealthCheckUrlTemplate] = useState(
     repo.environment_config?.health_check?.url_template || ''
   );
@@ -130,6 +133,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
   const [staticStartCommand, setStaticStartCommand] = useState(worktree.start_command || '');
   const [staticStopCommand, setStaticStopCommand] = useState(worktree.stop_command || '');
   const [staticNukeCommand, setStaticNukeCommand] = useState(worktree.nuke_command || '');
+  const [staticInstallCommand, setStaticInstallCommand] = useState(worktree.install_command || '');
   const [staticHealthCheckUrl, setStaticHealthCheckUrl] = useState(worktree.health_check_url || '');
   const [staticAppUrl, setStaticAppUrl] = useState(worktree.app_url || '');
   const [staticLogsCommand, setStaticLogsCommand] = useState(worktree.logs_command || '');
@@ -150,6 +154,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
   const [isStopping, setIsStopping] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [isNuking, setIsNuking] = useState(false);
+  const [isInstalling, setIsInstalling] = useState(false);
   const [lastHealthCheck, setLastHealthCheck] = useState(
     worktree.environment_instance?.last_health_check
   );
@@ -189,6 +194,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
       setStaticStartCommand(worktree.start_command || '');
       setStaticStopCommand(worktree.stop_command || '');
       setStaticNukeCommand(worktree.nuke_command || '');
+      setStaticInstallCommand(worktree.install_command || '');
       setStaticHealthCheckUrl(worktree.health_check_url || '');
       setStaticAppUrl(worktree.app_url || '');
       setStaticLogsCommand(worktree.logs_command || '');
@@ -315,6 +321,19 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     });
   };
 
+  const handleInstall = async () => {
+    if (!client) return;
+    setIsInstalling(true);
+    try {
+      await client.service(`worktrees/${worktree.worktree_id}/install`).create({});
+      showSuccess('Dependencies installed successfully');
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Failed to install dependencies');
+    } finally {
+      setIsInstalling(false);
+    }
+  };
+
   // Regenerate static environment config from repo templates
   const handleRegenerateFromTemplate = async () => {
     if (!client || !onUpdateWorktree || !repo.environment_config) {
@@ -375,6 +394,12 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
       updates.nuke_command = result;
     }
 
+    if (repo.environment_config.install_command) {
+      const result = safeRenderTemplate(repo.environment_config.install_command, 'install command');
+      if (result === null) return;
+      updates.install_command = result;
+    }
+
     if (repo.environment_config.health_check?.url_template) {
       const result = safeRenderTemplate(
         repo.environment_config.health_check.url_template,
@@ -409,6 +434,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
         upCommand ||
         downCommand ||
         nukeCommand ||
+        installCommand ||
         healthCheckUrlTemplate ||
         appUrlTemplate ||
         logsCommand
@@ -417,6 +443,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
       upCommand !== repo.environment_config.up_command ||
       downCommand !== repo.environment_config.down_command ||
       nukeCommand !== (repo.environment_config.nuke_command || '') ||
+      installCommand !== (repo.environment_config.install_command || '') ||
       healthCheckUrlTemplate !== (repo.environment_config.health_check?.url_template || '') ||
       appUrlTemplate !== (repo.environment_config.app_url_template || '') ||
       logsCommand !== (repo.environment_config.logs_command || '')
@@ -425,6 +452,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     upCommand,
     downCommand,
     nukeCommand,
+    installCommand,
     healthCheckUrlTemplate,
     appUrlTemplate,
     logsCommand,
@@ -444,6 +472,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
       up_command: upCommand,
       down_command: downCommand,
       nuke_command: nukeCommand || undefined,
+      install_command: installCommand || undefined,
       health_check: healthCheckUrlTemplate
         ? {
             type: 'http',
@@ -520,6 +549,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     setUpCommand(repo.environment_config?.up_command || '');
     setDownCommand(repo.environment_config?.down_command || '');
     setNukeCommand(repo.environment_config?.nuke_command || '');
+    setInstallCommand(repo.environment_config?.install_command || '');
     setHealthCheckUrlTemplate(repo.environment_config?.health_check?.url_template || '');
     setAppUrlTemplate(repo.environment_config?.app_url_template || '');
     setLogsCommand(repo.environment_config?.logs_command || '');
@@ -546,6 +576,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
         setUpCommand(updated.environment_config.up_command || '');
         setDownCommand(updated.environment_config.down_command || '');
         setNukeCommand(updated.environment_config.nuke_command || '');
+        setInstallCommand(updated.environment_config.install_command || '');
         setHealthCheckUrlTemplate(updated.environment_config.health_check?.url_template || '');
         setAppUrlTemplate(updated.environment_config.app_url_template || '');
         setLogsCommand(updated.environment_config.logs_command || '');
@@ -700,6 +731,19 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                 <div style={{ flex: 1 }} />
 
                 {/* Control Buttons */}
+                {/* Install first */}
+                {worktree.install_command && (
+                  <Button
+                    size="small"
+                    icon={isInstalling ? <LoadingOutlined /> : <DownloadOutlined />}
+                    onClick={handleInstall}
+                    disabled={isInstalling}
+                    loading={isInstalling}
+                  >
+                    Install
+                  </Button>
+                )}
+
                 <Button
                   type="primary"
                   size="small"
@@ -834,6 +878,30 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             {isEditingTemplate ? (
               <>
+                {/* Install Command (Top) */}
+                <div>
+                  <Typography.Text
+                    strong
+                    style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
+                  >
+                    Install Command (Optional)
+                  </Typography.Text>
+                  <TextArea
+                    value={installCommand}
+                    onChange={(e) => setInstallCommand(e.target.value)}
+                    placeholder="pnpm install"
+                    rows={2}
+                    style={{ fontFamily: 'monospace', fontSize: 11 }}
+                  />
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: 10, display: 'block', marginTop: 4 }}
+                  >
+                    Runs automatically after a worktree is created. Use to install project
+                    dependencies.
+                  </Typography.Text>
+                </div>
+
                 {/* Up Command */}
                 <div>
                   <Typography.Text
@@ -971,6 +1039,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
               </>
             ) : (
               <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                <TemplateField label="Install Command" value={installCommand} />
                 <TemplateField label="Up Command" value={upCommand} />
                 <TemplateField label="Down Command" value={downCommand} />
                 <TemplateField label="Nuke Command" value={nukeCommand} />
@@ -1194,6 +1263,21 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
               {isEditingUrls ? (
                 <>
                   <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    {/* Install Command at top */}
+                    <div>
+                      <Typography.Text
+                        strong
+                        style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
+                      >
+                        Install Command (Optional)
+                      </Typography.Text>
+                      <Input
+                        value={staticInstallCommand}
+                        onChange={(e) => setStaticInstallCommand(e.target.value)}
+                        placeholder="pnpm install"
+                        style={{ fontFamily: 'monospace', fontSize: 11 }}
+                      />
+                    </div>
                     <div>
                       <Typography.Text
                         strong
@@ -1289,6 +1373,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                         onUpdateWorktree(worktree.worktree_id, {
                           start_command: staticStartCommand || undefined,
                           stop_command: staticStopCommand || undefined,
+                          install_command: staticInstallCommand || undefined,
                           nuke_command: staticNukeCommand || undefined,
                           health_check_url: staticHealthCheckUrl || undefined,
                           app_url: staticAppUrl || undefined,
@@ -1304,6 +1389,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                       onClick={() => {
                         setStaticStartCommand(worktree.start_command || '');
                         setStaticStopCommand(worktree.stop_command || '');
+                        setStaticInstallCommand(worktree.install_command || '');
                         setStaticNukeCommand(worktree.nuke_command || '');
                         setStaticHealthCheckUrl(worktree.health_check_url || '');
                         setStaticAppUrl(worktree.app_url || '');
@@ -1317,6 +1403,16 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                 </>
               ) : (
                 <Descriptions column={1} bordered size="small" style={{ fontSize: 11 }}>
+                  <Descriptions.Item label="Install Command">
+                    <Typography.Text
+                      code
+                      copyable={staticInstallCommand ? { text: staticInstallCommand } : false}
+                    >
+                      {staticInstallCommand || (
+                        <Typography.Text type="secondary">(not set)</Typography.Text>
+                      )}
+                    </Typography.Text>
+                  </Descriptions.Item>
                   <Descriptions.Item label="Start Command">
                     <Typography.Text
                       code

@@ -224,6 +224,14 @@ export interface AgorIDEVSCodeSettings {
   /** Preferred connection mode when multiple are configured */
   preferred_mode?: VSCodeOpenMode;
 
+  /**
+   * Local open strategy when mode resolves to 'local'.
+   * - 'cli': launch local VS Code via `code <path>`
+   * - 'deeplink': return `vscode://file/<path>` for the client to open
+   * Default: 'cli'
+   */
+  local_open_strategy?: 'cli' | 'deeplink';
+
   /** Remote SSH configuration for vscode:// links */
   remote?: AgorIDESSHSettings;
 

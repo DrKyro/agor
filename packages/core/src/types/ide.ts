@@ -21,6 +21,13 @@ export interface VSCodeOpenResult {
   /** vscode:// URI to open */
   uri?: string;
 
+  /**
+   * When true, the daemon has already launched VS Code via the local CLI
+   * (e.g., `code <path>`). In this case, the client should not attempt to
+   * open the returned URI and can simply show a success toast.
+   */
+  launchedCli?: boolean;
+
   /** Optional user-facing reason when `enabled` is false or URI is unavailable */
   reason?: string;
 

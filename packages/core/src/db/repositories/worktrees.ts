@@ -54,6 +54,7 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
       worktree_unique_id: row.worktree_unique_id,
       start_command: row.start_command ?? undefined, // Static environment fields
       stop_command: row.stop_command ?? undefined,
+      install_command: row.install_command ?? undefined,
       nuke_command: row.nuke_command ?? undefined,
       health_check_url: row.health_check_url ?? undefined,
       app_url: row.app_url ?? undefined,
@@ -109,6 +110,7 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
       // Static environment fields (initialized from templates, then user-editable)
       start_command: worktree.start_command ?? null,
       stop_command: worktree.stop_command ?? null,
+      install_command: worktree.install_command ?? null,
       nuke_command: worktree.nuke_command ?? null,
       health_check_url: worktree.health_check_url ?? null,
       app_url: worktree.app_url ?? null,

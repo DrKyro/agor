@@ -28,6 +28,7 @@ export interface AppActionsContextValue {
   onStopEnvironment?: (worktreeId: string) => void;
   onNukeEnvironment?: (worktreeId: string) => void;
   onViewLogs?: (worktreeId: string) => void;
+  onInstallDependencies?: (worktreeId: string) => Promise<void> | void;
 
   // Navigation/UI actions
   onOpenSettings?: (sessionId: string) => void;

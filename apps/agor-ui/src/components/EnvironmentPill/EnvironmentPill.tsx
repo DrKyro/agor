@@ -2,21 +2,26 @@ import type { Repo, Worktree } from '@agor/core/types';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
+  DownloadOutlined,
   EditOutlined,
   FileTextOutlined,
   FireOutlined,
   GlobalOutlined,
+  LoadingOutlined,
   PlayCircleOutlined,
   StopOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import { Button, Space, Spin, Tag, Tooltip, theme } from 'antd';
+import { useState } from 'react';
 import { getEnvironmentState } from '../../utils/environmentState';
+import { useThemedMessage } from '../../utils/message';
 
 interface EnvironmentPillProps {
   repo: Repo; // Need repo for environment_config
   worktree: Worktree; // Has environment_instance (runtime state)
   onEdit?: () => void; // Opens WorktreeModal → Environment tab
+  onInstallDependencies?: (worktreeId: string) => Promise<void> | void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
   onNukeEnvironment?: (worktreeId: string) => void;
@@ -28,6 +33,7 @@ export function EnvironmentPill({
   repo,
   worktree,
   onEdit,
+  onInstallDependencies,
   onStartEnvironment,
   onStopEnvironment,
   onNukeEnvironment,
@@ -37,6 +43,8 @@ export function EnvironmentPill({
   const { token } = theme.useToken();
   const hasConfig = !!repo.environment_config;
   const env = worktree.environment_instance;
+  const [installing, setInstalling] = useState(false);
+  const { showWarning, showLoading } = useThemedMessage();
 
   // Get static app_url (user-editable, initialized from template)
   const environmentUrl = worktree.app_url;
@@ -218,7 +226,7 @@ export function EnvironmentPill({
         )}
 
         {/* Environment controls */}
-        {(onStartEnvironment || onStopEnvironment) && hasConfig && (
+        {(onInstallDependencies || onStartEnvironment || onStopEnvironment) && hasConfig && (
           <Space
             size={2}
             style={{
@@ -229,6 +237,36 @@ export function EnvironmentPill({
               alignItems: 'center',
             }}
           >
+            {worktree.install_command && (
+              <Tooltip title="Install dependencies">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={installing ? <LoadingOutlined /> : <DownloadOutlined />}
+                  onClick={async (event) => {
+                    event.stopPropagation();
+                    if (connectionDisabled) return;
+                    if (!onInstallDependencies) {
+                      showWarning('Install action unavailable');
+                      return;
+                    }
+                    setInstalling(true);
+                    try {
+                      // Always show immediate loading feedback
+                      showLoading('Installing dependencies...', { key: 'install-deps' });
+                      const ret = onInstallDependencies(worktree.worktree_id);
+                      if (ret && typeof (ret as Promise<void>).then === 'function') {
+                        await ret;
+                      }
+                    } finally {
+                      setInstalling(false);
+                    }
+                  }}
+                  disabled={connectionDisabled || installing}
+                  style={{ height: 22, width: 22, minWidth: 22, padding: 0 }}
+                />
+              </Tooltip>
+            )}
             {onStartEnvironment && (
               <Tooltip title={status === 'running' ? 'Environment running' : 'Start environment'}>
                 <Button

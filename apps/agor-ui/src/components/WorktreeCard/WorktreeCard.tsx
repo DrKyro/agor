@@ -4,7 +4,6 @@ import {
   BranchesOutlined,
   ClockCircleOutlined,
   CodeOutlined,
-  CodeSandboxOutlined,
   DeleteOutlined,
   DragOutlined,
   EditOutlined,
@@ -18,6 +17,7 @@ import type { MenuProps } from 'antd';
 import { Badge, Button, Card, Collapse, Space, Spin, Tree, Typography, theme } from 'antd';
 import { AggregationColor } from 'antd/es/color-picker/color';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useAppActions } from '../../contexts/AppActionsContext';
 import { useConnectionDisabled } from '../../contexts/ConnectionContext';
 import { getSessionDisplayTitle, getSessionTitleStyles } from '../../utils/sessionTitle';
 import { ensureColorVisible, isDarkTheme } from '../../utils/theme';
@@ -28,6 +28,7 @@ import { CreatedByTag } from '../metadata';
 import { IssuePill, PullRequestPill } from '../Pill';
 import { TaskStatusIcon } from '../TaskStatusIcon';
 import { ToolIcon } from '../ToolIcon';
+import { VSCodeIcon } from '../VSCodeIcon';
 import { buildSessionTree, type SessionTreeNode } from './buildSessionTree';
 
 const _WORKTREE_CARD_MAX_WIDTH = 600;
@@ -116,6 +117,7 @@ const WorktreeCardComponent = ({
 }: WorktreeCardProps) => {
   const { token } = theme.useToken();
   const connectionDisabled = useConnectionDisabled();
+  const { onInstallDependencies: ctxInstallDependencies } = useAppActions();
 
   // Fork/Spawn modal state
   const [forkSpawnModal, setForkSpawnModal] = useState<{
@@ -553,7 +555,7 @@ const WorktreeCardComponent = ({
               <Button
                 type="text"
                 size="small"
-                icon={<CodeSandboxOutlined />}
+                icon={<VSCodeIcon offsetY={0} />}
                 disabled={connectionDisabled}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -622,6 +624,7 @@ const WorktreeCardComponent = ({
             repo={repo}
             worktree={worktree}
             onEdit={() => onOpenSettings?.(worktree.worktree_id)}
+            onInstallDependencies={(worktreeId) => ctxInstallDependencies?.(worktreeId)}
             onStartEnvironment={onStartEnvironment}
             onStopEnvironment={onStopEnvironment}
             onViewLogs={onViewLogs}
