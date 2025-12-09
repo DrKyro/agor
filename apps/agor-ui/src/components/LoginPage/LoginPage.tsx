@@ -72,7 +72,6 @@ export function LoginPage({ onLogin, loading = false, error }: LoginPageProps) {
       >
         🤍 tsparticles
       </a>
-
       <Card
         style={{
           width: '100%',

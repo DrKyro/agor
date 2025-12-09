@@ -1594,7 +1594,7 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
       const diffResult = await getWorktreeDiff(worktree.path, fromRef, toRef, file);
 
       // Get available refs for UI reference selector
-      let availableRefs;
+      let availableRefs: Awaited<ReturnType<typeof getAvailableRefs>> | undefined;
       try {
         // Need repo path to get refs
         const repo = (await this.app.service('repos').get(worktree.repo_id, params)) as Repo;

@@ -17,14 +17,13 @@ import type {
 import { PermissionScope } from '@agor/core/types';
 import { Layout } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import DiffPage from '../DiffPage/DiffPage';
 import {
   type ImperativePanelHandle,
   Panel,
   PanelGroup,
   PanelResizeHandle,
 } from 'react-resizable-panels';
+import { useLocation } from 'react-router-dom';
 import { mapToArray } from '@/utils/mapHelpers';
 import { AppActionsProvider } from '../../contexts/AppActionsContext';
 import { AppDataProvider } from '../../contexts/AppDataContext';
@@ -38,6 +37,7 @@ import { initializeAudioOnInteraction } from '../../utils/audio';
 import { useThemedMessage } from '../../utils/message';
 import { AppHeader } from '../AppHeader';
 import { CommentsPanel } from '../CommentsPanel';
+import DiffPage from '../DiffPage/DiffPage';
 import { EnvironmentLogsModal } from '../EnvironmentLogsModal';
 import { EventStreamPanel } from '../EventStreamPanel';
 import { NewSessionButton } from '../NewSessionButton';
@@ -209,16 +209,8 @@ export const App: React.FC<AppProps> = ({
   const diffWorktree = diffWorktreeId ? worktreeById.get(diffWorktreeId) : null;
   const diffRepo = diffWorktree ? repoById.get(diffWorktree.repo_id) : null;
 
-  // If on diff page, render only the diff page
-  if (diffWorktreeId && diffWorktree && diffRepo) {
-    return (
-      <DiffPage
-        worktree={diffWorktree}
-        repo={diffRepo}
-        client={client}
-      />
-    );
-  }
+  // Note: Do not early-return here; it breaks hook order when navigating
+  // to and from the diff page. We conditionally render at the bottom instead.
   const [newWorktreeModalOpen, setNewWorktreeModalOpen] = useState(false);
   const [newWorktreeDefaultPosition, setNewWorktreeDefaultPosition] = useState<{
     x: number;
@@ -588,6 +580,11 @@ export const App: React.FC<AppProps> = ({
       handleOpenTerminal,
     ]
   );
+
+  // Render Diff-only view when path matches; otherwise render full app
+  if (diffWorktreeId && diffWorktree && diffRepo) {
+    return <DiffPage worktree={diffWorktree} repo={diffRepo} client={client} />;
+  }
 
   return (
     <AppDataProvider value={appDataValue}>

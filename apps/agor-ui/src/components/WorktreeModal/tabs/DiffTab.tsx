@@ -34,11 +34,6 @@ interface DiffState {
 }
 
 export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
-  // Early return for client check (before hooks to follow Rules of Hooks)
-  if (!client) {
-    return <div className="p-4">Client not available</div>;
-  }
-
   const [state, setState] = useState<DiffState>({
     fromRef: worktree.base_ref || 'HEAD',
     toRef: worktree.ref,
@@ -51,63 +46,10 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
   });
 
   /**
-   * Load diff from the API
-   */
-  const loadDiff = useCallback(async (from?: string, to?: string) => {
-    setState((prev) => ({ ...prev, loading: true, error: null }));
-
-    try {
-      // Call worktrees service getDiff method
-      const result = (await client.service(`worktrees/${worktree.worktree_id}/diff`).find({
-        query: {
-          from: from || state.fromRef,
-          to: to || state.toRef,
-        },
-      })) as {
-        diff: {
-          files: GitDiffFile[];
-          summary: {
-            total: number;
-            additions: number;
-            deletions: number;
-          };
-        };
-        availableRefs?: AvailableRefs;
-      };
-
-      // Get diff output for display
-      // We need to call a different endpoint or method to get the raw diff
-      // For now, we'll create a simple text representation
-      const diffOutput = generateDiffOutput(result.diff.files);
-
-      setState((prev) => ({
-        ...prev,
-        fromRef: from || prev.fromRef,
-        toRef: to || prev.toRef,
-        files: result.diff.files,
-        summary: result.diff.summary,
-        diffOutput,
-        availableRefs: result.availableRefs,
-        loading: false,
-        error: null,
-      }));
-    } catch (error) {
-      console.error('Failed to load diff:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to load diff';
-      setState((prev) => ({
-        ...prev,
-        loading: false,
-        error: errorMessage,
-      }));
-      message.error(`Failed to load diff: ${errorMessage}`);
-    }
-  }, [client, worktree.worktree_id, state.fromRef, state.toRef]);
-
-  /**
    * Generate simple diff output from file list
    * In a real implementation, this would come from the API
    */
-  const generateDiffOutput = (files: GitDiffFile[]): string => {
+  const generateDiffOutput = useCallback((files: GitDiffFile[]): string => {
     if (files.length === 0) {
       return 'No differences found';
     }
@@ -146,7 +88,77 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
     }
 
     return output;
-  };
+  }, []);
+
+  /**
+   * Load diff from the API
+   */
+  const loadDiff = useCallback(
+    async (from?: string, to?: string) => {
+      setState((prev) => ({ ...prev, loading: true, error: null }));
+
+      try {
+        // Call nested worktrees diff service with route params
+        const result = (await client!.service('worktrees/:id/diff').find({
+          route: { id: worktree.worktree_id },
+          query: {
+            from: from || state.fromRef,
+            to: to || state.toRef,
+          },
+        })) as unknown as {
+          diff: {
+            files: GitDiffFile[];
+            summary: {
+              total: number;
+              additions: number;
+              deletions: number;
+            };
+          };
+          diffOutput?: string;
+          availableRefs?: AvailableRefs;
+        };
+
+        // Get diff output for display
+        // We need to call a different endpoint or method to get the raw diff
+        // For now, we'll create a simple text representation
+        const diffOutput = result.diffOutput || generateDiffOutput(result.diff.files);
+
+        setState((prev) => ({
+          ...prev,
+          fromRef: from || prev.fromRef,
+          toRef: to || prev.toRef,
+          files: result.diff.files,
+          summary: result.diff.summary,
+          diffOutput,
+          availableRefs: result.availableRefs,
+          loading: false,
+          error: null,
+        }));
+      } catch (error) {
+        console.error('Failed to load diff:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load diff';
+        setState((prev) => ({
+          ...prev,
+          loading: false,
+          error: errorMessage,
+        }));
+        message.error(`Failed to load diff: ${errorMessage}`);
+      }
+    },
+    [client, worktree.worktree_id, state.fromRef, state.toRef, generateDiffOutput]
+  );
+
+  /**
+   * Initial load
+   */
+  useEffect(() => {
+    loadDiff();
+  }, [loadDiff]);
+
+  // Early return for client check (must be after hooks to follow Rules of Hooks)
+  if (!client) {
+    return <div className="p-4">Client not available</div>;
+  }
 
   /**
    * Handle ref change
@@ -161,13 +173,6 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
   const handleRefresh = () => {
     loadDiff();
   };
-
-  /**
-   * Initial load
-   */
-  useEffect(() => {
-    loadDiff();
-  }, [loadDiff, worktree.worktree_id]);
 
   return (
     <div style={{ padding: '16px' }}>

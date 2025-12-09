@@ -692,26 +692,34 @@ export async function getWorktreeDiff(
     const diffSummary = await git.diffSummary([`${from}..${to}`, ...args]);
 
     // Parse diff summary into structured data
-    const files: GitDiffFile[] = diffSummary.files.map((file: any) => {
-      // Determine status based on file flags
-      let status: 'added' | 'modified' | 'deleted' | 'renamed' = 'modified';
+    const files: GitDiffFile[] = diffSummary.files.map(
+      (file: {
+        file: string;
+        flags?: string[];
+        insertions?: number | string;
+        deletions?: number | string;
+        binary?: boolean;
+      }) => {
+        // Determine status based on file flags
+        let status: 'added' | 'modified' | 'deleted' | 'renamed' = 'modified';
 
-      if (file.flags && file.flags.includes('C')) {
-        status = 'renamed';
-      } else if (file.flags && file.flags.includes('D')) {
-        status = 'deleted';
-      } else if (file.flags && file.flags.includes('A')) {
-        status = 'added';
+        if (file.flags && file.flags.includes('C')) {
+          status = 'renamed';
+        } else if (file.flags && file.flags.includes('D')) {
+          status = 'deleted';
+        } else if (file.flags && file.flags.includes('A')) {
+          status = 'added';
+        }
+
+        return {
+          path: file.file,
+          status,
+          additions: Number(file.insertions) || 0,
+          deletions: Number(file.deletions) || 0,
+          isBinary: Boolean(file.binary),
+        };
       }
-
-      return {
-        path: file.file,
-        status,
-        additions: Number(file.insertions) || 0,
-        deletions: Number(file.deletions) || 0,
-        isBinary: Boolean(file.binary),
-      };
-    });
+    );
 
     // Calculate summary
     const summary = files.reduce(

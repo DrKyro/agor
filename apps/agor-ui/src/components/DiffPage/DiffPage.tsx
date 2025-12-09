@@ -6,14 +6,12 @@
 
 import type { AgorClient } from '@agor/core/api';
 import type { AvailableRefs, GitDiffFile, Repo, Worktree } from '@agor/core/types';
-import { LeftOutlined, BranchesOutlined } from '@ant-design/icons';
-import { Col, Row } from 'antd';
-import type React from 'react';
+import { BranchesOutlined, LeftOutlined } from '@ant-design/icons';
+import { Button, Col, Row, Typography, theme } from 'antd';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import DiffControls from '@/components/DiffControls/DiffControls';
 import DiffViewer from '@/components/DiffViewer/DiffViewer';
-import { Button } from 'antd';
-import { Typography, theme } from 'antd';
 
 interface DiffPageProps {
   worktree: Worktree;
@@ -37,15 +35,6 @@ interface DiffState {
 }
 
 export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) => {
-  // Early return for client check (before hooks to follow Rules of Hooks)
-  if (!client) {
-    return (
-      <div style={{ padding: '24px' }}>
-        <Typography.Text>Client not available</Typography.Text>
-      </div>
-    );
-  }
-
   const navigate = useNavigate();
   const { token } = theme.useToken();
   const [state, setState] = React.useState<DiffState>({
@@ -60,57 +49,9 @@ export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) =>
   });
 
   /**
-   * Load diff from the API
-   */
-  const loadDiff = React.useCallback(async (from?: string, to?: string) => {
-    setState((prev) => ({ ...prev, loading: true, error: null }));
-
-    try {
-      const result = (await client.service(`worktrees/${worktree.worktree_id}/diff`).find({
-        query: {
-          from: from || state.fromRef,
-          to: to || state.toRef,
-        },
-      })) as {
-        diff: {
-          files: GitDiffFile[];
-          summary: {
-            total: number;
-            additions: number;
-            deletions: number;
-          };
-        };
-        availableRefs?: AvailableRefs;
-      };
-
-      const diffOutput = generateDiffOutput(result.diff.files);
-
-      setState((prev) => ({
-        ...prev,
-        fromRef: from || prev.fromRef,
-        toRef: to || prev.toRef,
-        files: result.diff.files,
-        summary: result.diff.summary,
-        diffOutput,
-        availableRefs: result.availableRefs,
-        loading: false,
-        error: null,
-      }));
-    } catch (error) {
-      console.error('Failed to load diff:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to load diff';
-      setState((prev) => ({
-        ...prev,
-        loading: false,
-        error: errorMessage,
-      }));
-    }
-  }, [client, worktree.worktree_id, state.fromRef, state.toRef]);
-
-  /**
    * Generate simple diff output from file list
    */
-  const generateDiffOutput = (files: GitDiffFile[]): string => {
+  const generateDiffOutput = React.useCallback((files: GitDiffFile[]): string => {
     if (files.length === 0) {
       return 'No differences found';
     }
@@ -149,7 +90,67 @@ export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) =>
     }
 
     return output;
-  };
+  }, []);
+
+  /**
+   * Load diff from the API
+   */
+  const loadDiff = React.useCallback(
+    async (from?: string, to?: string) => {
+      setState((prev) => ({ ...prev, loading: true, error: null }));
+
+      if (!client) {
+        setState((prev) => ({ ...prev, loading: false, error: 'Client not available' }));
+        return;
+      }
+
+      try {
+        const result = (await client.service('worktrees/:id/diff').find({
+          // Feathers nested service: pass route param instead of path interpolation
+          route: { id: worktree.worktree_id },
+          query: {
+            from: from || state.fromRef,
+            to: to || state.toRef,
+          },
+        })) as unknown as {
+          diff: {
+            files: GitDiffFile[];
+            summary: {
+              total: number;
+              additions: number;
+              deletions: number;
+            };
+          };
+          diffOutput?: string;
+          availableRefs?: AvailableRefs;
+        };
+
+        // Prefer server-provided unified diff if available
+        const diffOutput = result.diffOutput || generateDiffOutput(result.diff.files);
+
+        setState((prev) => ({
+          ...prev,
+          fromRef: from || prev.fromRef,
+          toRef: to || prev.toRef,
+          files: result.diff.files,
+          summary: result.diff.summary,
+          diffOutput,
+          availableRefs: result.availableRefs,
+          loading: false,
+          error: null,
+        }));
+      } catch (error) {
+        console.error('Failed to load diff:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load diff';
+        setState((prev) => ({
+          ...prev,
+          loading: false,
+          error: errorMessage,
+        }));
+      }
+    },
+    [client, worktree.worktree_id, state.fromRef, state.toRef, generateDiffOutput]
+  );
 
   /**
    * Handle ref change
@@ -170,7 +171,7 @@ export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) =>
    */
   React.useEffect(() => {
     loadDiff();
-  }, [loadDiff, worktree.worktree_id]);
+  }, [loadDiff]);
 
   return (
     <div
@@ -191,11 +192,7 @@ export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) =>
           gap: '16px',
         }}
       >
-        <Button
-          type="text"
-          icon={<LeftOutlined />}
-          onClick={() => navigate(-1)}
-        >
+        <Button type="text" icon={<LeftOutlined />} onClick={() => navigate(-1)}>
           Back
         </Button>
         <BranchesOutlined style={{ fontSize: '20px', color: token.colorPrimary }} />
@@ -213,7 +210,7 @@ export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) =>
       <div style={{ flex: 1, overflow: 'hidden', padding: '16px 24px' }}>
         <Row gutter={16} style={{ height: '100%' }}>
           {/* Left sidebar - Controls */}
-          <Col span={8}>
+          <Col span={6}>
             <DiffControls
               worktreeRef={worktree.ref}
               worktreeBaseRef={worktree.base_ref}
@@ -227,11 +224,8 @@ export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) =>
           </Col>
 
           {/* Right main area - Diff Viewer */}
-          <Col span={16}>
-            <div
-              className="border rounded-lg overflow-hidden"
-              style={{ height: '100%' }}
-            >
+          <Col span={18}>
+            <div className="border rounded-lg overflow-hidden" style={{ height: '100%' }}>
               <DiffViewer
                 diffOutput={state.diffOutput}
                 files={state.files}

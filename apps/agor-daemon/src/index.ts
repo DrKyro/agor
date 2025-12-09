@@ -151,8 +151,8 @@ import { createTasksService } from './services/tasks';
 import { TerminalsService } from './services/terminals';
 import { createUsersService } from './services/users';
 import { setupWorktreeOwnersService } from './services/worktree-owners.js';
-import { setupWorktreesDiffService } from './services/worktrees-diff.js';
 import { createWorktreesService } from './services/worktrees';
+import { setupWorktreesDiffService } from './services/worktrees-diff.js';
 import { AnonymousStrategy } from './strategies/anonymous';
 import {
   ensureMinimumRole,

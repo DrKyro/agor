@@ -11,10 +11,10 @@
  * - Requires view permission on the worktree
  */
 
+import type { WorktreeRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
-import type { Database, WorktreeRepository } from '@agor/core/db';
+import { getAvailableRefs, getWorktreeDiff, getWorktreeDiffOutput } from '@agor/core/git';
 import type { WorktreeID } from '@agor/core/types';
-import { getWorktreeDiff, getAvailableRefs } from '@agor/core/git';
 
 export type WorktreeDiffParams = {
   route?: {
@@ -51,11 +51,14 @@ export function setupWorktreesDiffService(app: Application, worktreeRepo: Worktr
 
         console.log(`🔍 Getting diff for worktree ${worktree.name}: ${fromRef}..${toRef}`);
 
-        // Get diff result
+        // Get diff result (summary + file list)
         const diffResult = await getWorktreeDiff(worktree.path, fromRef, toRef, file);
 
+        // Get raw diff output for UI rendering (GitHub-like viewer)
+        const diffOutput = await getWorktreeDiffOutput(worktree.path, fromRef, toRef, file);
+
         // Get available refs for UI reference selector
-        let availableRefs;
+        let availableRefs: Awaited<ReturnType<typeof getAvailableRefs>> | undefined;
         try {
           // Need repo path to get refs
           const repo = await app.service('repos').get(worktree.repo_id, params);
@@ -67,6 +70,7 @@ export function setupWorktreesDiffService(app: Application, worktreeRepo: Worktr
 
         return {
           diff: diffResult,
+          diffOutput,
           availableRefs,
         };
       } catch (error) {

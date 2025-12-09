@@ -633,6 +633,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
       zoneLabels,
       userById,
       client,
+      onOpenDiff,
     ]);
 
     // No edges needed for worktree-centric boards

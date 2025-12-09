@@ -11,11 +11,11 @@ import type {
 import { Modal, Tabs } from 'antd';
 import { useState } from 'react';
 import { mapToArray } from '@/utils/mapHelpers';
+import { DiffTab } from './tabs/DiffTab';
 import { EnvironmentTab } from './tabs/EnvironmentTab';
 import { FilesTab } from './tabs/FilesTab';
 import { GeneralTab, type WorktreeUpdate } from './tabs/GeneralTab';
 import { ScheduleTab } from './tabs/ScheduleTab';
-import { DiffTab } from './tabs/DiffTab';
 
 export interface WorktreeModalProps {
   open: boolean;

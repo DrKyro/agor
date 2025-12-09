@@ -10,7 +10,6 @@ import { Button, Card, Input, Select, Space, Statistic, Tooltip } from 'antd';
 import type React from 'react';
 import { useEffect, useState } from 'react';
 
-const { Search } = Input;
 const { Option } = Select;
 
 interface DiffControlsProps {
@@ -113,9 +112,7 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
           {/* Ref Selectors */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                From (Original)
-              </label>
+              <div className="block text-sm font-medium text-gray-700 mb-1">From (Original)</div>
               <Select
                 value={fromRef}
                 onChange={setFromRef}
@@ -145,7 +142,7 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">To (Compare)</label>
+              <div className="block text-sm font-medium text-gray-700 mb-1">To (Compare)</div>
               <Select
                 value={toRef}
                 onChange={setToRef}
@@ -202,20 +199,24 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           {/* Search */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
-            <Search
-              placeholder="Search in diff content"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onSearch={handleSearch}
-              enterButton={<SearchOutlined />}
-            />
+            <div className="block text-sm font-medium text-gray-700 mb-1">Search</div>
+            <Space.Compact style={{ width: '100%' }}>
+              <Input
+                aria-label="Search diff content"
+                placeholder="Search in diff content"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onPressEnter={() => handleSearch(searchQuery)}
+              />
+              <Button icon={<SearchOutlined />} onClick={() => handleSearch(searchQuery)} />
+            </Space.Compact>
           </div>
 
           {/* File Pattern Filter */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">File Pattern</label>
+            <div className="block text-sm font-medium text-gray-700 mb-1">File Pattern</div>
             <Input
+              aria-label="File pattern"
               placeholder="e.g., *.ts, src/**/*.tsx"
               value={filePattern}
               onChange={(e) => setFilePattern(e.target.value)}
