@@ -58,13 +58,11 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
 
     try {
       // Call worktrees service getDiff method
-      const result = (await client.service('worktrees').find({
+      const result = (await client.service(`worktrees/${worktree.worktree_id}/diff`).find({
         query: {
-          $method: 'getDiff',
           from: from || state.fromRef,
           to: to || state.toRef,
         },
-        id: worktree.worktree_id,
       })) as {
         diff: {
           files: GitDiffFile[];
