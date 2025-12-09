@@ -1,18 +1,20 @@
 /**
- * Diff Tab Component
+ * Standalone Diff Page
  *
- * Main tab for displaying git diff between worktree branches
+ * Full-page view for git diff between worktree branches
  */
 
 import type { AgorClient } from '@agor/core/api';
 import type { AvailableRefs, GitDiffFile, Repo, Worktree } from '@agor/core/types';
-import { Col, message, Row } from 'antd';
+import { LeftOutlined, BranchesOutlined, Col, Row } from 'antd';
 import type React from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import DiffControls from '@/components/DiffControls/DiffControls';
 import DiffViewer from '@/components/DiffViewer/DiffViewer';
+import { Button } from 'antd';
+import { Typography, theme } from 'antd';
 
-interface DiffTabProps {
+interface DiffPageProps {
   worktree: Worktree;
   repo: Repo;
   client: AgorClient | null;
@@ -33,8 +35,10 @@ interface DiffState {
   error: string | null;
 }
 
-export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
-  const [state, setState] = useState<DiffState>({
+export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) => {
+  const navigate = useNavigate();
+  const { token } = theme.useToken();
+  const [state, setState] = React.useState<DiffState>({
     fromRef: worktree.base_ref || 'HEAD',
     toRef: worktree.ref,
     files: [],
@@ -48,7 +52,7 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
   /**
    * Load diff from the API
    */
-  const loadDiff = useCallback(async (from?: string, to?: string) => {
+  const loadDiff = React.useCallback(async (from?: string, to?: string) => {
     if (!client) {
       setState((prev) => ({ ...prev, error: 'No client available', loading: false }));
       return;
@@ -57,7 +61,6 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
-      // Call worktrees service getDiff method
       const result = (await client.service(`worktrees/${worktree.worktree_id}/diff`).find({
         query: {
           from: from || state.fromRef,
@@ -75,9 +78,6 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
         availableRefs?: AvailableRefs;
       };
 
-      // Get diff output for display
-      // We need to call a different endpoint or method to get the raw diff
-      // For now, we'll create a simple text representation
       const diffOutput = generateDiffOutput(result.diff.files);
 
       setState((prev) => ({
@@ -99,13 +99,11 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
         loading: false,
         error: errorMessage,
       }));
-      message.error(`Failed to load diff: ${errorMessage}`);
     }
   }, [client, worktree.worktree_id, state.fromRef, state.toRef]);
 
   /**
    * Generate simple diff output from file list
-   * In a real implementation, this would come from the API
    */
   const generateDiffOutput = (files: GitDiffFile[]): string => {
     if (files.length === 0) {
@@ -165,48 +163,90 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
   /**
    * Initial load
    */
-  useEffect(() => {
+  React.useEffect(() => {
     loadDiff();
   }, [loadDiff, worktree.worktree_id]);
 
   if (!client) {
-    return <div className="p-4">Client not available</div>;
+    return (
+      <div style={{ padding: '24px' }}>
+        <Typography.Text>Client not available</Typography.Text>
+      </div>
+    );
   }
 
   return (
-    <div style={{ padding: '16px' }}>
-      <Row gutter={16}>
-        {/* Left sidebar - Controls */}
-        <Col span={8}>
-          <DiffControls
-            worktreeRef={worktree.ref}
-            worktreeBaseRef={worktree.base_ref}
-            availableRefs={state.availableRefs}
-            files={state.files}
-            summary={state.summary}
-            onRefresh={handleRefresh}
-            onRefChange={handleRefChange}
-            loading={state.loading}
-          />
-        </Col>
+    <div
+      style={{
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: token.colorBgContainer,
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          padding: '16px 24px',
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px',
+        }}
+      >
+        <Button
+          type="text"
+          icon={<LeftOutlined />}
+          onClick={() => navigate(-1)}
+        >
+          Back
+        </Button>
+        <BranchesOutlined style={{ fontSize: '20px', color: token.colorPrimary }} />
+        <div>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            Git Diff
+          </Typography.Title>
+          <Typography.Text type="secondary">
+            {repo.slug} / {worktree.name}
+          </Typography.Text>
+        </div>
+      </div>
 
-        {/* Right main area - Diff Viewer */}
-        <Col span={16}>
-          <div
-            className="border rounded-lg overflow-hidden"
-            style={{ height: 'calc(100vh - 400px)' }}
-          >
-            <DiffViewer
-              diffOutput={state.diffOutput}
+      {/* Content */}
+      <div style={{ flex: 1, overflow: 'hidden', padding: '16px 24px' }}>
+        <Row gutter={16} style={{ height: '100%' }}>
+          {/* Left sidebar - Controls */}
+          <Col span={8}>
+            <DiffControls
+              worktreeRef={worktree.ref}
+              worktreeBaseRef={worktree.base_ref}
+              availableRefs={state.availableRefs}
               files={state.files}
+              summary={state.summary}
+              onRefresh={handleRefresh}
+              onRefChange={handleRefChange}
               loading={state.loading}
-              error={state.error}
             />
-          </div>
-        </Col>
-      </Row>
+          </Col>
+
+          {/* Right main area - Diff Viewer */}
+          <Col span={16}>
+            <div
+              className="border rounded-lg overflow-hidden"
+              style={{ height: '100%' }}
+            >
+              <DiffViewer
+                diffOutput={state.diffOutput}
+                files={state.files}
+                loading={state.loading}
+                error={state.error}
+              />
+            </div>
+          </Col>
+        </Row>
+      </div>
     </div>
   );
 };
 
-export default DiffTab;
+export default DiffPage;

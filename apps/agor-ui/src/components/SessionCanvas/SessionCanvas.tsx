@@ -116,6 +116,7 @@ interface SessionCanvasProps {
   onOpenTerminal?: (commands: string[], worktreeId?: string) => void;
   onOpenVSCode?: (worktreeId: string) => void;
   onOpenCodeServer?: (worktreeId: string) => void;
+  onOpenDiff?: (worktreeId: string) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
   onViewLogs?: (worktreeId: string) => void;
@@ -189,6 +190,7 @@ interface WorktreeNodeData {
   onOpenTerminal?: (commands: string[], worktreeId?: string) => void;
   onOpenVSCode?: (worktreeId: string) => void;
   onOpenCodeServer?: (worktreeId: string) => void;
+  onOpenDiff?: (worktreeId: string) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
   onViewLogs?: (worktreeId: string) => void;
@@ -223,6 +225,7 @@ const WorktreeNode = ({ data }: { data: WorktreeNodeData }) => {
         onOpenTerminal={data.onOpenTerminal}
         onOpenVSCode={data.onOpenVSCode}
         onOpenCodeServer={data.onOpenCodeServer}
+        onOpenDiff={data.onOpenDiff}
         onStartEnvironment={data.onStartEnvironment}
         onStopEnvironment={data.onStopEnvironment}
         onViewLogs={data.onViewLogs}
@@ -279,6 +282,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
       onOpenTerminal,
       onOpenVSCode,
       onOpenCodeServer,
+      onOpenDiff,
       onStartEnvironment,
       onStopEnvironment,
       onViewLogs,
@@ -587,6 +591,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
             onOpenTerminal,
             onOpenVSCode,
             onOpenCodeServer,
+            onOpenDiff,
             onStartEnvironment,
             onStopEnvironment,
             onViewLogs,

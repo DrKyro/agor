@@ -269,10 +269,10 @@ export const ForkSpawnModal: React.FC<ForkSpawnModalProps> = ({
           name="prompt"
           label={`Prompt for ${action === 'fork' ? 'forked' : 'spawned'} session`}
           rules={[{ required: true, message: 'Please enter a prompt' }]}
+          getValueFromEvent={(value) => value}
+          setValueOnChange={(value) => value}
         >
           <AutocompleteTextarea
-            value={form.getFieldValue('prompt') || ''}
-            onChange={(value) => form.setFieldValue('prompt', value)}
             placeholder={
               action === 'fork'
                 ? 'Try a different approach by... (type @ for autocomplete)'
@@ -374,10 +374,10 @@ export const ForkSpawnModal: React.FC<ForkSpawnModalProps> = ({
               name="extraInstructions"
               label="Extra Instructions (optional)"
               help="Append additional context or constraints to the spawn prompt"
+              getValueFromEvent={(value) => value}
+              setValueOnChange={(value) => value}
             >
               <AutocompleteTextarea
-                value={form.getFieldValue('extraInstructions') || ''}
-                onChange={(value) => form.setFieldValue('extraInstructions', value)}
                 placeholder='e.g., "Only use safe operations", "Prioritize performance" (type @ for autocomplete)'
                 autoSize={{ minRows: 2, maxRows: 4 }}
                 client={client}

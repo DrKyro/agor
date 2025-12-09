@@ -17,6 +17,8 @@ import type {
 import { PermissionScope } from '@agor/core/types';
 import { Layout } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import DiffPage from '../DiffPage/DiffPage';
 import {
   type ImperativePanelHandle,
   Panel,
@@ -113,6 +115,7 @@ export interface AppProps {
   ) => Promise<Worktree | null>;
   onOpenVSCode?: (worktreeId: string) => void;
   onOpenCodeServer?: (worktreeId: string) => void;
+  onOpenDiff?: (worktreeId: string) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
   onNukeEnvironment?: (worktreeId: string) => void;
@@ -175,6 +178,7 @@ export const App: React.FC<AppProps> = ({
   onCreateWorktree,
   onOpenVSCode,
   onOpenCodeServer,
+  onOpenDiff,
   onStartEnvironment,
   onStopEnvironment,
   onNukeEnvironment,
@@ -195,8 +199,26 @@ export const App: React.FC<AppProps> = ({
   onRetryConnection,
 }) => {
   const { showWarning } = useThemedMessage();
+  const location = useLocation();
   const sessionCanvasRef = useRef<SessionCanvasRef>(null);
   const [newSessionWorktreeId, setNewSessionWorktreeId] = useState<string | null>(null);
+
+  // Check if we're on a diff page
+  const diffMatch = location.pathname.match(/^\/diff\/([^/]+)$/);
+  const diffWorktreeId = diffMatch ? diffMatch[1] : null;
+  const diffWorktree = diffWorktreeId ? worktreeById.get(diffWorktreeId) : null;
+  const diffRepo = diffWorktree ? repoById.get(diffWorktree.repo_id) : null;
+
+  // If on diff page, render only the diff page
+  if (diffWorktreeId && diffWorktree && diffRepo) {
+    return (
+      <DiffPage
+        worktree={diffWorktree}
+        repo={diffRepo}
+        client={client}
+      />
+    );
+  }
   const [newWorktreeModalOpen, setNewWorktreeModalOpen] = useState(false);
   const [newWorktreeDefaultPosition, setNewWorktreeDefaultPosition] = useState<{
     x: number;
@@ -547,6 +569,7 @@ export const App: React.FC<AppProps> = ({
       onOpenTerminal: handleOpenTerminal,
       onOpenVSCode,
       onOpenCodeServer,
+      onOpenDiff,
     }),
     [
       onSendPrompt,
@@ -561,6 +584,7 @@ export const App: React.FC<AppProps> = ({
       onInstallDependencies,
       onOpenVSCode,
       onOpenCodeServer,
+      onOpenDiff,
       handleOpenTerminal,
     ]
   );
@@ -775,6 +799,7 @@ export const App: React.FC<AppProps> = ({
                         onOpenTerminal={handleOpenTerminal}
                         onOpenVSCode={onOpenVSCode}
                         onOpenCodeServer={onOpenCodeServer}
+                        onOpenDiff={onOpenDiff}
                         onStartEnvironment={onStartEnvironment}
                         onStopEnvironment={onStopEnvironment}
                         onViewLogs={setLogsModalWorktreeId}
