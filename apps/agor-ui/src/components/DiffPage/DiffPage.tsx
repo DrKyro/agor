@@ -6,7 +6,7 @@
 
 import type { AgorClient } from '@agor/core/api';
 import type { AvailableRefs, GitDiffFile, Repo, Worktree } from '@agor/core/types';
-import { LeftOutlined, BranchesOutlined, Col, Row } from 'antd';
+import { LeftOutlined, BranchOutlined, Col, Row } from 'antd';
 import type React from 'react';
 import { useNavigate } from 'react-router-dom';
 import DiffControls from '@/components/DiffControls/DiffControls';
@@ -201,7 +201,7 @@ export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) =>
         >
           Back
         </Button>
-        <BranchesOutlined style={{ fontSize: '20px', color: token.colorPrimary }} />
+        <BranchOutlined style={{ fontSize: '20px', color: token.colorPrimary }} />
         <div>
           <Typography.Title level={4} style={{ margin: 0 }}>
             Git Diff
