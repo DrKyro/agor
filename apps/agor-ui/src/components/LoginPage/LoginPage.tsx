@@ -8,7 +8,6 @@ import { LockOutlined, MailOutlined } from '@ant-design/icons';
 import { Alert, Button, Card, Divider, Form, Input, Space, Typography } from 'antd';
 import { useState } from 'react';
 import { BrandLogo } from '../BrandLogo';
-import { ParticleBackground } from './ParticleBackground';
 
 const { Text } = Typography;
 
@@ -45,34 +44,6 @@ export function LoginPage({ onLogin, loading = false, error }: LoginPageProps) {
         overflow: 'auto',
       }}
     >
-      {/* Particle background */}
-      <ParticleBackground />
-
-      {/* Attribution */}
-      <a
-        href="https://particles.js.org"
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          position: 'fixed',
-          bottom: 16,
-          right: 16,
-          fontSize: 10,
-          color: 'rgba(46, 154, 146, 0.3)',
-          textDecoration: 'none',
-          zIndex: 0,
-          transition: 'color 0.3s',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.color = 'rgba(46, 154, 146, 0.6)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.color = 'rgba(46, 154, 146, 0.3)';
-        }}
-      >
-        🤍 tsparticles
-      </a>
-
       <Card
         style={{
           width: '100%',
