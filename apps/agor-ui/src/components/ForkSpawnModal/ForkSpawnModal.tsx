@@ -17,7 +17,7 @@ import type {
 } from '@agor/core/types';
 import { getDefaultPermissionMode } from '@agor/core/types';
 import { DownOutlined } from '@ant-design/icons';
-import { Checkbox, Collapse, Form, Modal, Radio, Typography } from 'antd';
+import { Checkbox, Collapse, Form, Input, Modal, Radio, Typography } from 'antd';
 import Handlebars from 'handlebars';
 import { useEffect, useMemo, useState } from 'react';
 import spawnSubsessionTemplate from '../../templates/spawn_subsession.hbs?raw';
