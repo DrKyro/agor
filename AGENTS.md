@@ -22,7 +22,20 @@ Manage git worktrees, track AI conversations, visualize work on spatial boards, 
 
 ## Quick Start
 
-**Simplified 2-process workflow:**
+**Recommended: Turbo TUI Mode (All-in-One Terminal)**
+
+```bash
+# Single command to start all dev servers with beautiful TUI interface
+pnpm dev
+```
+
+This launches all applications with automatic parallel execution and a split-screen terminal interface:
+- `@agor/core` - Shared core package (watch mode)
+- `@agor/daemon` - Backend service + Core (via concurrently)
+- `@agor/ui` - React frontend application
+- `@agor/docs` - Documentation site (if applicable)
+
+**Alternative: Manual Terminal Workflow**
 
 ```bash
 # Terminal 1: Daemon (watches core + daemon, auto-restarts)
@@ -34,12 +47,21 @@ cd apps/agor-ui
 pnpm dev
 ```
 
+**Turbo TUI Features:**
+- ✨ Automatic split-screen layout with color-coded panels
+- 📊 Real-time logs from all applications in one terminal
+- 🔄 Auto-restart on code changes
+- 🎯 Easy switching between panels
+
 **IMPORTANT FOR AGENTS:**
 
 - User runs dev environment in watch mode (daemon + UI)
 - **DO NOT run `pnpm build`** or compilation commands unless explicitly asked
 - **DO NOT start background processes** - user manages these
 - Focus on code edits; watch mode handles recompilation automatically
+- Use `pnpm dev` for Turbo TUI mode (recommended) or run apps separately in different terminals
+
+**For more details, see:** `docs/TURBO-TUI.md`
 
 ---
 

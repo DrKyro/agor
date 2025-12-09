@@ -17,7 +17,6 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "dev:ui-daemon": "pnpm --filter @agor/ui dev & pnpm --filter @agor/daemon dev & wait",
     "docs:dev": "pnpm --filter @agor/docs dev",
     "docs:build": "pnpm --filter @agor/docs build",
     "docs:generate": "pnpm --filter @agor/docs generate",
