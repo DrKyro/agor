@@ -83,18 +83,15 @@ export function initializeAudioOnInteraction(): void {
   document.addEventListener('touchstart', handleInteraction, { once: true });
 }
 
-/**
- * Check if audio is likely to be blocked by browser autoplay policy
- * @returns Promise<boolean> - true if audio is BLOCKED, false if audio is ALLOWED
- */
-export function checkAudioPermission(): Promise<boolean> {
-  return new Promise((resolve) => {
-    // Use a silent data URI to avoid "no supported source" errors
-    // This is a minimal valid audio file that won't make any sound
-    const silentDataUri =
-      'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADhAC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAA4T0rBiNAAAAAAD/+xDEAAPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEDwPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEHwPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
+const SILENT_AUDIO_DATA_URI =
+  'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADhAC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAA4T0rBiNAAAAAAD/+xDEAAPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEDwPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEHwPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
 
-    const audio = new Audio(silentDataUri);
+/**
+ * Attempt to play a silent audio clip to infer permission/interaction state
+ */
+async function attemptSilentAudioPlayback(): Promise<'allowed' | 'blocked'> {
+  return new Promise((resolve) => {
+    const audio = new Audio(SILENT_AUDIO_DATA_URI);
     audio.volume = 0;
 
     const testPlay = audio.play();
@@ -103,22 +100,37 @@ export function checkAudioPermission(): Promise<boolean> {
       testPlay
         .then(() => {
           audio.pause();
-          resolve(false); // Audio allowed (NOT blocked)
+          resolve('allowed');
         })
         .catch((error) => {
-          // Only treat NotAllowedError as a permission block
-          // NotSupportedError or other errors should not be treated as blocked
           if (error instanceof Error && error.name === 'NotAllowedError') {
-            resolve(true); // Audio blocked by autoplay policy
+            resolve('blocked');
           } else {
-            resolve(false); // Other errors, assume audio is allowed
+            resolve('allowed');
           }
         });
     } else {
-      // Old browsers without promise-based play()
-      resolve(false); // Assume allowed
+      resolve('allowed');
     }
   });
+}
+
+/**
+ * Check if audio is likely to be blocked by browser autoplay policy
+ * @returns Promise<boolean> - true if audio is BLOCKED, false if audio is ALLOWED
+ */
+export async function checkAudioPermission(): Promise<boolean> {
+  const result = await attemptSilentAudioPlayback();
+  return result === 'blocked';
+}
+
+/**
+ * Try to unlock audio playback in response to a user gesture
+ * @returns Promise<boolean> - true if audio is now allowed
+ */
+export async function requestAudioPermission(): Promise<boolean> {
+  const result = await attemptSilentAudioPlayback();
+  return result === 'allowed';
 }
 
 /**

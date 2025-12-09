@@ -5,7 +5,7 @@
 import type { AgorClient } from '@agor/core/api';
 import { type SessionID, type Task, TaskStatus, type User } from '@agor/core/types';
 import { useCallback, useEffect, useState } from 'react';
-import { playTaskCompletionChime } from '../utils/audio';
+import { useNotifications } from './useNotifications';
 
 interface UseTasksResult {
   tasks: Task[];
@@ -32,6 +32,7 @@ export function useTasks(
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { notifyTaskCompletion } = useNotifications(user);
 
   // Fetch tasks for session
   const fetchTasks = useCallback(async () => {
@@ -112,7 +113,7 @@ export function useTasks(
 
           // Play chime if transitioning from RUNNING to COMPLETED/FAILED
           if (wasRunning && isNowDone) {
-            playTaskCompletionChime(task, user?.preferences?.audio);
+            notifyTaskCompletion(task);
           }
 
           // Create new array with updated task at same position
@@ -141,7 +142,7 @@ export function useTasks(
       tasksService.removeListener('updated', handleTaskPatched);
       tasksService.removeListener('removed', handleTaskRemoved);
     };
-  }, [client, sessionId, fetchTasks, user, enabled]);
+  }, [client, sessionId, fetchTasks, notifyTaskCompletion, enabled]);
 
   return {
     tasks,
