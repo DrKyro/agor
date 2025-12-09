@@ -5,9 +5,9 @@
  * Uses simple HTML/CSS to avoid heavy dependencies.
  */
 
-import React from 'react';
-import { Empty, Spin } from 'antd';
 import type { GitDiffFile } from '@agor/core/types';
+import { Empty, Spin } from 'antd';
+import type React from 'react';
 
 interface DiffViewerProps {
   diffOutput?: string;
@@ -153,9 +153,7 @@ function DiffLineView({ line, isLeft }: { line: DiffLine; isLeft: boolean }) {
 
   return (
     <div className={`flex text-sm font-mono ${getLineClass()}`}>
-      <div className="w-12 text-right pr-2 text-gray-500 select-none">
-        {getLineNumber()}
-      </div>
+      <div className="w-12 text-right pr-2 text-gray-500 select-none">{getLineNumber()}</div>
       <div className="flex-1 px-2">
         <pre className="whitespace-pre-wrap break-words">{line.content || ' '}</pre>
       </div>
@@ -169,9 +167,7 @@ function DiffLineView({ line, isLeft }: { line: DiffLine; isLeft: boolean }) {
 function FileDiffView({ file }: { file: { name: string; lines: DiffLine[] } }) {
   return (
     <div className="border rounded-lg overflow-hidden mb-4">
-      <div className="bg-gray-50 px-4 py-2 border-b font-semibold text-gray-700">
-        {file.name}
-      </div>
+      <div className="bg-gray-50 px-4 py-2 border-b font-semibold text-gray-700">{file.name}</div>
 
       <div className="grid grid-cols-2 divide-x">
         {/* Left side (original) */}
@@ -226,9 +222,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
       <div className="p-4">
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description={
-            <span className="text-red-500">Failed to load diff: {error}</span>
-          }
+          description={<span className="text-red-500">Failed to load diff: {error}</span>}
         />
       </div>
     );
@@ -237,10 +231,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   if (!diffOutput || diffOutput.trim() === '') {
     return (
       <div className="p-4">
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="No differences found"
-        />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No differences found" />
       </div>
     );
   }
@@ -251,10 +242,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   if (parsed.files.length === 0) {
     return (
       <div className="p-4">
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="No files changed"
-        />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No files changed" />
       </div>
     );
   }

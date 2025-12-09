@@ -4,10 +4,11 @@
  * Provides controls for selecting diff parameters (from/to refs, filters, search)
  */
 
-import React, { useState, useEffect } from 'react';
-import { Button, Input, Select, Space, Tooltip, Card, Statistic } from 'antd';
-import { ReloadOutlined, SearchOutlined, FilterOutlined } from '@ant-design/icons';
 import type { AvailableRefs, GitDiffFile } from '@agor/core/types';
+import { FilterOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Card, Input, Select, Space, Statistic, Tooltip } from 'antd';
+import type React from 'react';
+import { useEffect, useState } from 'react';
 
 const { Search } = Input;
 const { Option } = Select;
@@ -132,11 +133,11 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
                   <Option key={`branch-${branch}`} value={branch}>
                     📁 {branch}
                   </Option>
- {/* Tags */}
-                {availableRefs?.tags.map((tag) => (
-                                 ))}
+                ))}
 
-                <Option key={`tag-${tag}`} value={tag}>
+                {/* Tags */}
+                {availableRefs?.tags.map((tag) => (
+                  <Option key={`tag-${tag}`} value={tag}>
                     🏷️ {tag}
                   </Option>
                 ))}
@@ -144,9 +145,7 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                To (Compare)
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">To (Compare)</label>
               <Select
                 value={toRef}
                 onChange={setToRef}
@@ -184,11 +183,7 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
             </Button>
 
             <Tooltip title="Refresh diff">
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={onRefresh}
-                loading={loading}
-              />
+              <Button icon={<ReloadOutlined />} onClick={onRefresh} loading={loading} />
             </Tooltip>
           </div>
         </Space>
@@ -207,9 +202,7 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           {/* Search */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Search
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
             <Search
               placeholder="Search in diff content"
               value={searchQuery}
@@ -221,9 +214,7 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
 
           {/* File Pattern Filter */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              File Pattern
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">File Pattern</label>
             <Input
               placeholder="e.g., *.ts, src/**/*.tsx"
               value={filePattern}
@@ -253,10 +244,7 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
 
       {/* Files List */}
       {files.length > 0 && (
-        <Card
-          size="small"
-          title={`Changed Files (${files.length})`}
-        >
+        <Card size="small" title={`Changed Files (${files.length})`}>
           <div className="max-h-48 overflow-y-auto space-y-1">
             {files.map((file) => (
               <div
@@ -273,12 +261,8 @@ export const DiffControls: React.FC<DiffControlsProps> = ({
                   <span className="text-sm font-mono truncate">{file.path}</span>
                 </div>
                 <div className="flex gap-2 text-xs">
-                  {file.additions > 0 && (
-                    <span className="text-green-600">+{file.additions}</span>
-                  )}
-                  {file.deletions > 0 && (
-                    <span className="text-red-600">-{file.deletions}</span>
-                  )}
+                  {file.additions > 0 && <span className="text-green-600">+{file.additions}</span>}
+                  {file.deletions > 0 && <span className="text-red-600">-{file.deletions}</span>}
                 </div>
               </div>
             ))}

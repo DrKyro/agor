@@ -4,10 +4,11 @@
  * Main tab for displaying git diff between worktree branches
  */
 
-import React, { useState, useEffect } from 'react';
-import { Row, Col, message, Spin } from 'antd';
-import type { Worktree, Repo, GitDiffFile, AvailableRefs } from '@agor/core/types';
 import type { AgorClient } from '@agor/core/api';
+import type { AvailableRefs, GitDiffFile, Repo, Worktree } from '@agor/core/types';
+import { Col, message, Row } from 'antd';
+import type React from 'react';
+import { useEffect, useState } from 'react';
 import DiffControls from '@/components/DiffControls/DiffControls';
 import DiffViewer from '@/components/DiffViewer/DiffViewer';
 
@@ -57,14 +58,14 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
 
     try {
       // Call worktrees service getDiff method
-      const result = await client.service('worktrees').find({
+      const result = (await client.service('worktrees').find({
         query: {
           $method: 'getDiff',
           from: from || state.fromRef,
           to: to || state.toRef,
         },
         id: worktree.worktree_id,
-      }) as {
+      })) as {
         diff: {
           files: GitDiffFile[];
           summary: {
@@ -168,7 +169,7 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
    */
   useEffect(() => {
     loadDiff();
-  }, []);
+  }, [loadDiff]);
 
   if (!client) {
     return <div className="p-4">Client not available</div>;
@@ -193,7 +194,10 @@ export const DiffTab: React.FC<DiffTabProps> = ({ worktree, repo, client }) => {
 
         {/* Right main area - Diff Viewer */}
         <Col span={16}>
-          <div className="border rounded-lg overflow-hidden" style={{ height: 'calc(100vh - 400px)' }}>
+          <div
+            className="border rounded-lg overflow-hidden"
+            style={{ height: 'calc(100vh - 400px)' }}
+          >
             <DiffViewer
               diffOutput={state.diffOutput}
               files={state.files}
