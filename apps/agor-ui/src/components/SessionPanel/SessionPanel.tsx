@@ -31,9 +31,10 @@ import spawnSubsessionTemplate from '../../templates/spawn_subsession.hbs?raw';
 import { getContextWindowGradient } from '../../utils/contextWindow';
 import { getSessionDisplayTitle, getSessionTitleStyles } from '../../utils/sessionTitle';
 import { compileTemplate } from '../../utils/templates';
+import { ACCESS_TOKEN_KEY } from '../../utils/tokenRefresh';
 import { AutocompleteTextarea } from '../AutocompleteTextarea';
-import { FileUploadButton } from '../FileUpload';
 import type { UploadedFile } from '../FileUpload';
+import { FileUploadButton } from '../FileUpload';
 import { CreatedByTag } from '../metadata';
 import { PermissionModeSelector } from '../PermissionModeSelector';
 import {
@@ -48,7 +49,6 @@ import { ThinkingModeSelector } from '../ThinkingModeSelector';
 import { ToolIcon } from '../ToolIcon';
 import { VSCodeIcon } from '../VSCodeIcon';
 import { SessionPanelContent } from './SessionPanelContent';
-import { ACCESS_TOKEN_KEY } from '../../utils/tokenRefresh';
 
 // Re-export PermissionMode from SDK for convenience
 export type { PermissionMode };
@@ -193,7 +193,9 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
   }, []);
 
   const clearImageAttachments = React.useCallback(() => {
-    previewUrlMapRef.current.forEach((url) => URL.revokeObjectURL(url));
+    previewUrlMapRef.current.forEach((url) => {
+      URL.revokeObjectURL(url);
+    });
     previewUrlMapRef.current.clear();
     setImageAttachments([]);
   }, []);
@@ -273,7 +275,9 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
           error instanceof Error ? error.message : 'Failed to upload pasted image';
         setImageAttachments((prev) =>
           prev.map((attachment) =>
-            attachment.id === attachmentId ? { ...attachment, status: 'error', error: errorMessage } : attachment
+            attachment.id === attachmentId
+              ? { ...attachment, status: 'error', error: errorMessage }
+              : attachment
           )
         );
         message.error(errorMessage);
@@ -355,7 +359,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
 
   React.useEffect(() => {
     clearImageAttachments();
-  }, [clearImageAttachments, session?.session_id]);
+  }, [clearImageAttachments]);
 
   // Fetch queued messages
   React.useEffect(() => {
