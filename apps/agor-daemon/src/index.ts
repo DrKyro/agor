@@ -152,6 +152,7 @@ import { TerminalsService } from './services/terminals';
 import { createUsersService } from './services/users';
 import { setupWorktreeOwnersService } from './services/worktree-owners.js';
 import { createWorktreesService } from './services/worktrees';
+import { setupWorktreesDiffService } from './services/worktrees-diff.js';
 import { AnonymousStrategy } from './strategies/anonymous';
 import {
   ensureMinimumRole,
@@ -1084,6 +1085,13 @@ async function main() {
   ) {
     const worktreeRepo = new WorktreeRepository(db);
     setupWorktreeOwnersService(app, worktreeRepo);
+  }
+
+  // Register worktrees-diff nested route service for git diff operations
+  // This service is always available (not gated by RBAC)
+  if (!app.services['worktrees/:id/diff']) {
+    const worktreeRepo = new WorktreeRepository(db);
+    setupWorktreesDiffService(app, worktreeRepo);
   }
 
   // Initialize Unix integration service for worktree isolation

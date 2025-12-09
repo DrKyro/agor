@@ -23,6 +23,7 @@ import {
   PanelGroup,
   PanelResizeHandle,
 } from 'react-resizable-panels';
+import { useLocation } from 'react-router-dom';
 import { mapToArray } from '@/utils/mapHelpers';
 import { AppActionsProvider } from '../../contexts/AppActionsContext';
 import { AppDataProvider } from '../../contexts/AppDataContext';
@@ -36,6 +37,7 @@ import { initializeAudioOnInteraction } from '../../utils/audio';
 import { useThemedMessage } from '../../utils/message';
 import { AppHeader } from '../AppHeader';
 import { CommentsPanel } from '../CommentsPanel';
+import DiffPage from '../DiffPage/DiffPage';
 import { EnvironmentLogsModal } from '../EnvironmentLogsModal';
 import { EventStreamPanel } from '../EventStreamPanel';
 import { NewSessionButton } from '../NewSessionButton';
@@ -113,6 +115,7 @@ export interface AppProps {
   ) => Promise<Worktree | null>;
   onOpenVSCode?: (worktreeId: string) => void;
   onOpenCodeServer?: (worktreeId: string) => void;
+  onOpenDiff?: (worktreeId: string) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
   onNukeEnvironment?: (worktreeId: string) => void;
@@ -175,6 +178,7 @@ export const App: React.FC<AppProps> = ({
   onCreateWorktree,
   onOpenVSCode,
   onOpenCodeServer,
+  onOpenDiff,
   onStartEnvironment,
   onStopEnvironment,
   onNukeEnvironment,
@@ -195,8 +199,18 @@ export const App: React.FC<AppProps> = ({
   onRetryConnection,
 }) => {
   const { showWarning } = useThemedMessage();
+  const location = useLocation();
   const sessionCanvasRef = useRef<SessionCanvasRef>(null);
   const [newSessionWorktreeId, setNewSessionWorktreeId] = useState<string | null>(null);
+
+  // Check if we're on a diff page
+  const diffMatch = location.pathname.match(/^\/diff\/([^/]+)$/);
+  const diffWorktreeId = diffMatch ? diffMatch[1] : null;
+  const diffWorktree = diffWorktreeId ? worktreeById.get(diffWorktreeId) : null;
+  const diffRepo = diffWorktree ? repoById.get(diffWorktree.repo_id) : null;
+
+  // Note: Do not early-return here; it breaks hook order when navigating
+  // to and from the diff page. We conditionally render at the bottom instead.
   const [newWorktreeModalOpen, setNewWorktreeModalOpen] = useState(false);
   const [newWorktreeDefaultPosition, setNewWorktreeDefaultPosition] = useState<{
     x: number;
@@ -547,6 +561,7 @@ export const App: React.FC<AppProps> = ({
       onOpenTerminal: handleOpenTerminal,
       onOpenVSCode,
       onOpenCodeServer,
+      onOpenDiff,
     }),
     [
       onSendPrompt,
@@ -561,9 +576,15 @@ export const App: React.FC<AppProps> = ({
       onInstallDependencies,
       onOpenVSCode,
       onOpenCodeServer,
+      onOpenDiff,
       handleOpenTerminal,
     ]
   );
+
+  // Render Diff-only view when path matches; otherwise render full app
+  if (diffWorktreeId && diffWorktree && diffRepo) {
+    return <DiffPage worktree={diffWorktree} repo={diffRepo} client={client} />;
+  }
 
   return (
     <AppDataProvider value={appDataValue}>
@@ -775,6 +796,7 @@ export const App: React.FC<AppProps> = ({
                         onOpenTerminal={handleOpenTerminal}
                         onOpenVSCode={onOpenVSCode}
                         onOpenCodeServer={onOpenCodeServer}
+                        onOpenDiff={onOpenDiff}
                         onStartEnvironment={onStartEnvironment}
                         onStopEnvironment={onStopEnvironment}
                         onViewLogs={setLogsModalWorktreeId}

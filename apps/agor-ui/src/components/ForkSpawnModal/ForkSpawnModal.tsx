@@ -17,14 +17,13 @@ import type {
 } from '@agor/core/types';
 import { getDefaultPermissionMode } from '@agor/core/types';
 import { DownOutlined } from '@ant-design/icons';
-import { Checkbox, Collapse, Form, Modal, Radio, Typography } from 'antd';
+import { Checkbox, Collapse, Form, Input, Modal, Radio, Typography } from 'antd';
 import Handlebars from 'handlebars';
 import { useEffect, useMemo, useState } from 'react';
 import spawnSubsessionTemplate from '../../templates/spawn_subsession.hbs?raw';
 import { AgenticToolConfigForm } from '../AgenticToolConfigForm';
 import { AgentSelectionGrid } from '../AgentSelectionGrid/AgentSelectionGrid';
 import { AVAILABLE_AGENTS } from '../AgentSelectionGrid/availableAgents';
-import { AutocompleteTextarea } from '../AutocompleteTextarea';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import type { ModelConfig } from '../ModelSelector';
 
@@ -270,18 +269,13 @@ export const ForkSpawnModal: React.FC<ForkSpawnModalProps> = ({
           label={`Prompt for ${action === 'fork' ? 'forked' : 'spawned'} session`}
           rules={[{ required: true, message: 'Please enter a prompt' }]}
         >
-          <AutocompleteTextarea
-            value={form.getFieldValue('prompt') || ''}
-            onChange={(value) => form.setFieldValue('prompt', value)}
+          <Input.TextArea
             placeholder={
               action === 'fork'
                 ? 'Try a different approach by... (type @ for autocomplete)'
                 : 'Work on this subsession... (type @ for autocomplete)'
             }
             autoSize={{ minRows: 3, maxRows: 8 }}
-            client={client}
-            sessionId={session?.session_id || null}
-            userById={userById}
           />
         </Form.Item>
 
@@ -375,14 +369,9 @@ export const ForkSpawnModal: React.FC<ForkSpawnModalProps> = ({
               label="Extra Instructions (optional)"
               help="Append additional context or constraints to the spawn prompt"
             >
-              <AutocompleteTextarea
-                value={form.getFieldValue('extraInstructions') || ''}
-                onChange={(value) => form.setFieldValue('extraInstructions', value)}
+              <Input.TextArea
                 placeholder='e.g., "Only use safe operations", "Prioritize performance" (type @ for autocomplete)'
                 autoSize={{ minRows: 2, maxRows: 4 }}
-                client={client}
-                sessionId={session?.session_id || null}
-                userById={userById}
               />
             </Form.Item>
 

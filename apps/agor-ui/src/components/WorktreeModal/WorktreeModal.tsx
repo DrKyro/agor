@@ -11,6 +11,7 @@ import type {
 import { Modal, Tabs } from 'antd';
 import { useState } from 'react';
 import { mapToArray } from '@/utils/mapHelpers';
+import { DiffTab } from './tabs/DiffTab';
 import { EnvironmentTab } from './tabs/EnvironmentTab';
 import { FilesTab } from './tabs/FilesTab';
 import { GeneralTab, type WorktreeUpdate } from './tabs/GeneralTab';
@@ -111,6 +112,11 @@ export const WorktreeModal: React.FC<WorktreeModalProps> = ({
             key: 'files',
             label: 'Files',
             children: <FilesTab worktree={worktree} client={client} />,
+          },
+          {
+            key: 'diff',
+            label: 'Diff',
+            children: <DiffTab worktree={worktree} repo={repo} client={client} />,
           },
           {
             key: 'schedule',

@@ -72,7 +72,7 @@ export const OwnersSection: React.FC<OwnersSectionProps> = ({ worktree, client, 
       } catch (error: any) {
         // If service doesn't exist (404 or method not found), RBAC is disabled
         if (error?.code === 404 || error?.message?.includes('not found')) {
-          console.log('[OwnersSection] RBAC disabled - worktree-owners service not found');
+          console.debug('[OwnersSection] RBAC disabled - worktree-owners service not found');
           setRbacEnabled(false);
         } else {
           console.error('Failed to load data:', error);

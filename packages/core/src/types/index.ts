@@ -7,6 +7,7 @@ export * from './board-comment';
 export * from './context';
 export * from './feathers';
 export * from './file';
+export * from './git-diff';
 export * from './id';
 export * from './ide';
 export * from './mcp';
