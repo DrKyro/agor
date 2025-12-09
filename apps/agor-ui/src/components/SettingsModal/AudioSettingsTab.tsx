@@ -3,7 +3,12 @@
  */
 
 import type { User } from '@agor/core/types';
-import { InfoCircleOutlined, PlayCircleOutlined, SoundOutlined } from '@ant-design/icons';
+import {
+  InfoCircleOutlined,
+  PlayCircleOutlined,
+  SoundOutlined,
+  UnlockOutlined,
+} from '@ant-design/icons';
 import {
   Alert,
   Button,
@@ -26,6 +31,7 @@ import {
   getAvailableChimes,
   getChimeDisplayName,
   previewChimeSound,
+  requestAudioPermission,
 } from '../../utils/audio';
 import { useThemedMessage } from '../../utils/message';
 
@@ -41,6 +47,7 @@ export const AudioSettingsTab: React.FC<AudioSettingsTabProps> = ({ user, form }
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState<boolean | null>(null);
   const [showPermissionAlert, setShowPermissionAlert] = useState(false);
+  const [requestingPermission, setRequestingPermission] = useState(false);
 
   // Get current audio preferences or use defaults
   const audioPrefs = user?.preferences?.audio || DEFAULT_AUDIO_PREFERENCES;
@@ -83,6 +90,26 @@ export const AudioSettingsTab: React.FC<AudioSettingsTabProps> = ({ user, form }
       }
     } else {
       setShowPermissionAlert(false);
+    }
+  };
+
+  const handleRequestPermission = async () => {
+    setRequestingPermission(true);
+    try {
+      const allowed = await requestAudioPermission();
+      setAudioBlocked(!allowed);
+      if (allowed) {
+        setShowPermissionAlert(false);
+        showInfo('Audio playback unlocked. Use Preview to confirm your browser settings.');
+      } else {
+        setShowPermissionAlert(true);
+        showWarning('Browser is still blocking audio. Please adjust site permissions manually.');
+      }
+    } catch (error) {
+      console.error('Failed to request audio permission:', error);
+      showError('Unable to request audio permission. Please adjust browser settings.');
+    } finally {
+      setRequestingPermission(false);
     }
   };
 
@@ -131,6 +158,16 @@ export const AudioSettingsTab: React.FC<AudioSettingsTabProps> = ({ user, form }
                 <strong>Safari:</strong> Safari → Settings for this Website → Auto-Play → Allow All
                 Auto-Play
               </p>
+              <Button
+                icon={<UnlockOutlined />}
+                type="primary"
+                size="small"
+                style={{ marginTop: 12 }}
+                onClick={handleRequestPermission}
+                loading={requestingPermission}
+              >
+                Request Audio Permission
+              </Button>
             </div>
           }
           closable

@@ -80,6 +80,44 @@ export interface AudioPreferences {
 }
 
 /**
+ * Notification channel strategy
+ * - smart: Use engagement-aware strategy (toast only in foreground, desktop+audio otherwise)
+ * - always-desktop: Always show desktop notifications when permission is granted
+ * - toast-only: Suppress desktop notifications (toast/audio still respect their own prefs)
+ */
+export type NotificationStrategy = 'smart' | 'always-desktop' | 'toast-only';
+
+/**
+ * Base notification channel preference toggle
+ */
+export interface NotificationChannelPreference {
+  /** Enable/disable this notification channel */
+  enabled: boolean;
+}
+
+/**
+ * Desktop notification preferences
+ */
+export interface DesktopNotificationPreference extends NotificationChannelPreference {
+  /** Keep notification on screen until user interacts */
+  requireInteraction?: boolean;
+  /** Play desktop notification silently (audio handled separately) */
+  silent?: boolean;
+}
+
+/**
+ * Notification preferences for desktop/toast channels
+ */
+export interface NotificationPreferences {
+  /** Engagement-aware strategy */
+  strategy?: NotificationStrategy;
+  /** Desktop notification channel configuration */
+  desktop?: DesktopNotificationPreference;
+  /** Toast notification channel configuration */
+  toast?: NotificationChannelPreference;
+}
+
+/**
  * Event stream preferences for debugging WebSocket events
  */
 export interface EventStreamPreferences {
@@ -92,6 +130,7 @@ export interface EventStreamPreferences {
  */
 export interface UserPreferences {
   audio?: AudioPreferences;
+  notifications?: NotificationPreferences;
   eventStream?: EventStreamPreferences;
   // Future preferences can be added here
   [key: string]: unknown;

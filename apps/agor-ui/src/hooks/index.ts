@@ -5,6 +5,7 @@ export * from './useAuthConfig';
 export * from './useBoardActions';
 export * from './useLocalStorage';
 export * from './useMessages';
+export * from './useNotifications';
 export * from './useSessionActions';
 export * from './useStreamingMessages';
 export * from './useTaskMessages';
