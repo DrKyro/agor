@@ -1,14 +1,18 @@
-import type { NotificationStrategy, User } from '@agor/core/types';
+import type { NotificationStrategy, SessionID, Task, TaskID, User } from '@agor/core/types';
+import { TaskStatus } from '@agor/core/types';
 import { BellOutlined, DesktopOutlined, SoundOutlined } from '@ant-design/icons';
 import { Alert, Button, Card, Col, Form, Row, Select, Space, Switch, Tag, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
+import { playTaskCompletionChime } from '../../utils/audio';
 import { useThemedMessage } from '../../utils/message';
 import {
+  computeNotificationDecision,
   DEFAULT_NOTIFICATION_PREFERENCES,
   DesktopNotificationPermission,
   getDesktopNotificationPermission,
   mergeNotificationPreferences,
   requestDesktopNotificationPermission,
+  showDesktopNotification,
 } from '../../utils/notifications';
 
 const { Paragraph, Text } = Typography;
@@ -17,6 +21,14 @@ interface NotificationSettingsTabProps {
   user: User | null;
   form: ReturnType<typeof Form.useForm>[0];
   isOpen: boolean;
+}
+
+interface NotificationFormValues {
+  strategy?: NotificationStrategy;
+  desktopEnabled?: boolean;
+  desktopRequireInteraction?: boolean;
+  desktopSilent?: boolean;
+  toastEnabled?: boolean;
 }
 
 const STRATEGY_DESCRIPTIONS: Record<'smart' | 'always-desktop' | 'toast-only', string> = {
@@ -62,6 +74,7 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
     getDesktopNotificationPermission()
   );
   const [requestingPermission, setRequestingPermission] = useState(false);
+  const [testingNotification, setTestingNotification] = useState(false);
 
   const notificationPrefs = useMemo(
     () => mergeNotificationPreferences(user?.preferences?.notifications),
@@ -105,6 +118,65 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
 
   const permissionMeta = PERMISSION_META[permission] ?? PERMISSION_META.default;
 
+  const handleTestNotification = async () => {
+    setTestingNotification(true);
+    try {
+      const values = form.getFieldsValue() as NotificationFormValues;
+      const strategy = (values.strategy ?? 'smart') as NotificationStrategy;
+      const desktopEnabled = values.desktopEnabled ?? false;
+      const toastEnabled = values.toastEnabled ?? true;
+      const decision = computeNotificationDecision({
+        strategy,
+        desktopEnabled,
+        toastEnabled,
+        desktopPermission: permission,
+      });
+
+      const summary = 'Agents will use this channel when tasks finish.';
+      let triggered = false;
+
+      if (decision.showToast) {
+        triggered = true;
+        showSuccess('✅ Test notification: Task completed!', { duration: 4 });
+      }
+
+      if (decision.showDesktop) {
+        triggered = true;
+        const notification = showDesktopNotification({
+          title: 'Agor Test Notification',
+          body: summary,
+          silent: values.desktopSilent ?? false,
+          requireInteraction: values.desktopRequireInteraction ?? false,
+        });
+
+        if (!notification && permission !== 'granted') {
+          showWarning(
+            'Browser blocked the desktop notification. Allow notifications in site settings.'
+          );
+        }
+      } else if (desktopEnabled && permission !== 'granted') {
+        showWarning('Desktop notifications are enabled, but browser permission is not granted.');
+      }
+
+      if (decision.allowAudio) {
+        triggered = true;
+        try {
+          await playTaskCompletionChime(buildSampleTask(user), user?.preferences?.audio);
+        } catch (error) {
+          console.debug('Audio chime preview failed:', error);
+        }
+      }
+
+      if (!triggered) {
+        showInfo(
+          'Toast/Desktop notifications are disabled. Enable at least one channel to receive alerts.'
+        );
+      }
+    } finally {
+      setTestingNotification(false);
+    }
+  };
+
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
@@ -114,6 +186,14 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
         <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
           Configure how Agor routes toasts, desktop notifications, and task-completion chimes.
         </Paragraph>
+        <Button
+          icon={<BellOutlined />}
+          style={{ marginTop: 16 }}
+          onClick={handleTestNotification}
+          loading={testingNotification}
+        >
+          Send Test Notification
+        </Button>
       </div>
 
       <Form
@@ -271,3 +351,33 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
     </div>
   );
 };
+
+const TEST_TASK_ID = '00000000-0000-0000-0000-000000000000' as TaskID;
+const TEST_SESSION_ID = '00000000-0000-0000-0000-000000000001' as SessionID;
+
+function buildSampleTask(user: User | null): Task {
+  const now = new Date().toISOString();
+  return {
+    task_id: TEST_TASK_ID,
+    session_id: TEST_SESSION_ID,
+    created_by: user?.user_id ?? 'test-user',
+    full_prompt: 'Test notification preview',
+    description: 'Previewing notification channels',
+    status: TaskStatus.COMPLETED,
+    message_range: {
+      start_index: 0,
+      end_index: 0,
+      start_timestamp: now,
+      end_timestamp: now,
+    },
+    tool_use_count: 0,
+    git_state: {
+      ref_at_start: 'main',
+      sha_at_start: 'HEAD',
+    },
+    duration_ms: 2000,
+    created_at: now,
+    started_at: now,
+    completed_at: now,
+  };
+}
