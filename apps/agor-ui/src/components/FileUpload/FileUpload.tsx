@@ -11,7 +11,7 @@ const { Text } = Typography;
 // Debug logging only in development
 const DEBUG_UPLOAD = import.meta.env.DEV;
 
-export type UploadDestination = 'worktree' | 'temp' | 'global';
+export type UploadDestination = 'worktree' | 'worktree-temp' | 'temp' | 'global';
 
 export interface UploadedFile {
   filename: string;
@@ -243,11 +243,19 @@ export const FileUpload: React.FC<FileUploadProps> = ({
                   </Text>
                 </Space>
               </Radio>
+              <Radio value="worktree-temp">
+                <Space direction="vertical" size={0}>
+                  <Text>Worktree temp (./temp)</Text>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>
+                    Stored inside the active worktree's temp folder
+                  </Text>
+                </Space>
+              </Radio>
               <Radio value="temp">
                 <Space direction="vertical" size={0}>
                   <Text>Temp folder</Text>
                   <Text type="secondary" style={{ fontSize: '12px' }}>
-                    Ephemeral, auto-cleanup
+                    OS temp directory, shared across worktrees
                   </Text>
                 </Space>
               </Radio>

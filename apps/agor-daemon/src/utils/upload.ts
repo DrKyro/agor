@@ -3,7 +3,8 @@
  *
  * Supports uploading files to:
  * - Worktree (.agor/uploads/) - Default, agent-accessible
- * - Temp folder - Ephemeral uploads
+ * - Worktree temp (./temp/) - Worktree-scoped scratch space
+ * - Temp folder - Ephemeral uploads (shared across worktrees)
  * - Global (~/.agor/uploads/) - Shared across sessions
  */
 
@@ -20,7 +21,7 @@ const DEBUG_UPLOAD = process.env.NODE_ENV !== 'production';
 /**
  * Destination types for file uploads
  */
-export type UploadDestination = 'worktree' | 'temp' | 'global';
+export type UploadDestination = 'worktree' | 'worktree-temp' | 'temp' | 'global';
 
 /**
  * Create multer storage configuration
@@ -38,7 +39,7 @@ export function createUploadStorage(
         const destination = (req.query.destination as UploadDestination) || 'worktree';
 
         // Validate destination
-        if (!['worktree', 'temp', 'global'].includes(destination)) {
+        if (!['worktree', 'worktree-temp', 'temp', 'global'].includes(destination)) {
           console.error(`❌ [Upload Storage] Invalid destination: ${destination}`);
           return cb(new Error(`Invalid destination: ${destination}`), '');
         }
@@ -78,6 +79,7 @@ export function createUploadStorage(
         // Map destination to actual path
         const paths: Record<UploadDestination, string> = {
           worktree: path.join(worktree.path, '.agor', 'uploads'),
+          'worktree-temp': path.join(worktree.path, 'temp'),
           temp: path.join(os.tmpdir(), 'agor-uploads'),
           global: path.join(os.homedir(), '.agor', 'uploads'),
         };
