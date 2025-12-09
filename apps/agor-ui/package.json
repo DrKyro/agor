@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:ui": "vite",
     "build-watch": "vite build --watch",
     "build": "tsc -b && vite build",
     "lint": "biome check .",

@@ -1,14 +1,29 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDependencies": ["**/.env.*local"],
+  "ui": "tui",
   "tasks": {
+    "dev:ui": {
+      "cache": false,
+      "persistent": true,
+      "env": ["NODE_ENV", "VITE_DAEMON_URL", "VITE_DAEMON_PORT"],
+      "outputs": []
+    },
+    "dev:daemon": {
+      "cache": false,
+      "persistent": true,
+      "env": ["NODE_ENV", "PORT"],
+      "outputs": []
+    },
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**", "build/**", "storybook-static/**"]
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "env": ["NODE_ENV"],
+      "outputs": []
     },
     "lint": {
       "dependsOn": ["^build"]

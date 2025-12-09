@@ -17,6 +17,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "dev:ui-daemon": "pnpm turbo run dev:ui dev:daemon",
     "docs:dev": "pnpm --filter @agor/docs dev",
     "docs:build": "pnpm --filter @agor/docs build",
     "docs:generate": "pnpm --filter @agor/docs generate",
