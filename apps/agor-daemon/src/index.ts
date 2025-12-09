@@ -3196,10 +3196,19 @@ async function main() {
         return res.status(404).json({ error: 'Session not found' });
       }
 
-      // Check if user is the session owner
-      if (session.created_by !== params.user?.user_id) {
+      // Fetch worktree for ownership + path conversions
+      let worktree: Awaited<ReturnType<typeof worktreeRepo.findById>> | undefined;
+      if (session.worktree_id) {
+        worktree = await worktreeRepo.findById(session.worktree_id);
+      }
+
+      const userId = params.user?.user_id;
+      const isSessionOwner = !!userId && session.created_by === userId;
+      const isWorktreeOwner = !!userId && worktree?.created_by === userId;
+
+      if (!isSessionOwner && !isWorktreeOwner) {
         console.error(
-          `❌ [Upload Handler] User ${params.user?.user_id?.substring(0, 8)} not authorized for session ${sessionId.substring(0, 8)}`
+          `❌ [Upload Handler] User ${userId?.substring(0, 8) || 'unknown'} not authorized for session ${sessionId.substring(0, 8)}`
         );
         return res.status(403).json({ error: 'Not authorized to upload to this session' });
       }
@@ -3207,12 +3216,6 @@ async function main() {
       if (!files || files.length === 0) {
         console.error('❌ [Upload Handler] No files in request');
         return res.status(400).json({ error: 'No files uploaded' });
-      }
-
-      // Get worktree to convert paths to relative
-      let worktree: Awaited<ReturnType<typeof worktreeRepo.findById>> | undefined;
-      if (session.worktree_id) {
-        worktree = await worktreeRepo.findById(session.worktree_id);
       }
 
       // Convert absolute paths to relative for response

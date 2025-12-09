@@ -14,11 +14,14 @@ import {
   Typography,
 } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
+import { DEFAULT_AUDIO_PREFERENCES } from '../../utils/audio';
+import { mergeNotificationPreferences } from '../../utils/notifications';
 import { AgenticToolConfigForm } from '../AgenticToolConfigForm';
 import { ApiKeyFields, type ApiKeyStatus } from '../ApiKeyFields';
 import { FormEmojiPickerInput } from '../EmojiPickerInput';
 import { EnvVarEditor } from '../EnvVarEditor';
 import { AudioSettingsTab } from './AudioSettingsTab';
+import { NotificationSettingsTab } from './NotificationSettingsTab';
 
 export interface UserSettingsModalProps {
   open: boolean;
@@ -46,6 +49,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
   const [geminiForm] = Form.useForm();
   const [opencodeForm] = Form.useForm();
   const [audioForm] = Form.useForm();
+  const [notificationForm] = Form.useForm();
   const [sshForm] = Form.useForm();
 
   // API key management state
@@ -109,12 +113,21 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       });
 
       // Initialize audio form with user's preferences
-      const audioPrefs = userData.preferences?.audio;
+      const audioPrefs = userData.preferences?.audio ?? DEFAULT_AUDIO_PREFERENCES;
       audioForm.setFieldsValue({
-        enabled: audioPrefs?.enabled ?? true,
-        chime: audioPrefs?.chime ?? 'bell',
-        volume: audioPrefs?.volume ?? 50,
-        minDurationSeconds: audioPrefs?.minDurationSeconds ?? 5,
+        enabled: audioPrefs.enabled,
+        chime: audioPrefs.chime,
+        volume: audioPrefs.volume,
+        minDurationSeconds: audioPrefs.minDurationSeconds,
+      });
+
+      const notificationPrefs = mergeNotificationPreferences(userData.preferences?.notifications);
+      notificationForm.setFieldsValue({
+        strategy: notificationPrefs.strategy,
+        desktopEnabled: notificationPrefs.desktop.enabled,
+        desktopRequireInteraction: notificationPrefs.desktop.requireInteraction ?? false,
+        desktopSilent: notificationPrefs.desktop.silent ?? false,
+        toastEnabled: notificationPrefs.toast.enabled,
       });
 
       sshForm.setFieldsValue({
@@ -125,7 +138,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         sshPublicKey: userData.ssh_config?.public_key,
       });
     },
-    [form, claudeForm, codexForm, geminiForm, audioForm, sshForm]
+    [form, claudeForm, codexForm, geminiForm, audioForm, notificationForm, sshForm]
   );
 
   // Initialize when modal opens with user data
@@ -164,6 +177,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
   const handleClose = () => {
     form.resetFields();
     audioForm.resetFields();
+    notificationForm.resetFields();
     claudeForm.resetFields();
     codexForm.resetFields();
     geminiForm.resetFields();
@@ -382,7 +396,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     if (!user || !onUpdate) return;
 
     try {
-      const values = audioForm.getFieldsValue();
+      const values = await audioForm.validateFields();
       const updatedPreferences = {
         ...user.preferences,
         audio: {
@@ -393,13 +407,43 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         },
       };
 
-      onUpdate(user.user_id, {
+      await onUpdate(user.user_id, {
         preferences: updatedPreferences,
       });
 
       handleClose();
     } catch (error) {
       console.error('Failed to save audio settings:', error);
+    }
+  };
+
+  const handleNotificationSave = async () => {
+    if (!user || !onUpdate) return;
+
+    try {
+      const values = await notificationForm.validateFields();
+      const updatedPreferences = {
+        ...user.preferences,
+        notifications: {
+          strategy: values.strategy,
+          desktop: {
+            enabled: values.desktopEnabled ?? false,
+            requireInteraction: values.desktopRequireInteraction ?? false,
+            silent: values.desktopSilent ?? false,
+          },
+          toast: {
+            enabled: values.toastEnabled ?? true,
+          },
+        },
+      };
+
+      await onUpdate(user.user_id, {
+        preferences: updatedPreferences,
+      });
+
+      handleClose();
+    } catch (error) {
+      console.error('Failed to save notification settings:', error);
     }
   };
 
@@ -415,6 +459,9 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       case 'env-vars':
         // These tabs save individually, just close
         handleClose();
+        break;
+      case 'notifications':
+        await handleNotificationSave();
         break;
       case 'audio':
         await handleAudioSave();
@@ -640,6 +687,15 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
                   onDelete={handleEnvVarDelete}
                   loading={savingEnvVars}
                 />
+              </div>
+            ),
+          },
+          {
+            key: 'notifications',
+            label: 'Notifications',
+            children: (
+              <div style={{ paddingTop: 8 }}>
+                <NotificationSettingsTab user={user} form={notificationForm} isOpen={open} />
               </div>
             ),
           },
