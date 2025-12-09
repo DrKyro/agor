@@ -14,14 +14,14 @@ import {
   Typography,
 } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
+import { DEFAULT_AUDIO_PREFERENCES } from '../../utils/audio';
+import { mergeNotificationPreferences } from '../../utils/notifications';
 import { AgenticToolConfigForm } from '../AgenticToolConfigForm';
 import { ApiKeyFields, type ApiKeyStatus } from '../ApiKeyFields';
 import { FormEmojiPickerInput } from '../EmojiPickerInput';
 import { EnvVarEditor } from '../EnvVarEditor';
 import { AudioSettingsTab } from './AudioSettingsTab';
 import { NotificationSettingsTab } from './NotificationSettingsTab';
-import { DEFAULT_AUDIO_PREFERENCES } from '../../utils/audio';
-import { mergeNotificationPreferences } from '../../utils/notifications';
 
 export interface UserSettingsModalProps {
   open: boolean;

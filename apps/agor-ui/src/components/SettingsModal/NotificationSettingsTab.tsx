@@ -1,18 +1,6 @@
-import type { User } from '@agor/core/types';
+import type { NotificationStrategy, User } from '@agor/core/types';
 import { BellOutlined, DesktopOutlined, SoundOutlined } from '@ant-design/icons';
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Form,
-  Row,
-  Select,
-  Space,
-  Switch,
-  Tag,
-  Typography,
-} from 'antd';
+import { Alert, Button, Card, Col, Form, Row, Select, Space, Switch, Tag, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useThemedMessage } from '../../utils/message';
 import {
@@ -32,12 +20,16 @@ interface NotificationSettingsTabProps {
 }
 
 const STRATEGY_DESCRIPTIONS: Record<'smart' | 'always-desktop' | 'toast-only', string> = {
-  smart: 'Use engagement-aware routing. Toasts in the foreground, desktop + audio in the background.',
+  smart:
+    'Use engagement-aware routing. Toasts in the foreground, desktop + audio in the background.',
   'always-desktop': 'Always show desktop notifications (if permitted) regardless of tab focus.',
   'toast-only': 'Never trigger desktop notifications. Use toast + audio only.',
 };
 
-const PERMISSION_META: Record<DesktopNotificationPermission, { label: string; color: string; helper: string }> = {
+const PERMISSION_META: Record<
+  DesktopNotificationPermission,
+  { label: string; color: string; helper: string }
+> = {
   granted: {
     label: 'Granted',
     color: 'green',
@@ -91,15 +83,21 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
       if (result === 'granted') {
         showSuccess('Desktop notifications enabled. We will alert you when tasks finish.');
       } else if (result === 'denied') {
-        showWarning('Desktop notifications remain blocked. Update browser site settings to allow them.');
+        showWarning(
+          'Desktop notifications remain blocked. Update browser site settings to allow them.'
+        );
       } else if (result === 'default') {
-        showInfo('Browser dismissed the prompt. Click the address-bar icon to allow notifications.');
+        showInfo(
+          'Browser dismissed the prompt. Click the address-bar icon to allow notifications.'
+        );
       } else if (result === 'unsupported') {
         showWarning('Notifications are not supported in this browser.');
       }
     } catch (error) {
       console.error('Failed to request desktop notification permission:', error);
-      showError('Unable to request desktop notification permission. Please adjust browser settings manually.');
+      showError(
+        'Unable to request desktop notification permission. Please adjust browser settings manually.'
+      );
     } finally {
       setRequestingPermission(false);
     }
@@ -144,7 +142,7 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
         </Form.Item>
         <Form.Item noStyle shouldUpdate={(prev, curr) => prev.strategy !== curr.strategy}>
           {() => {
-            const value = form.getFieldValue('strategy') ?? 'smart';
+            const value = (form.getFieldValue('strategy') ?? 'smart') as NotificationStrategy;
             const description = STRATEGY_DESCRIPTIONS[value] ?? STRATEGY_DESCRIPTIONS.smart;
             return (
               <Paragraph type="secondary" style={{ marginTop: 0 }}>
@@ -156,7 +154,14 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
 
         <Row gutter={16}>
           <Col span={12}>
-            <Card title={<span><DesktopOutlined /> Desktop Notifications</span>} bordered>
+            <Card
+              title={
+                <span>
+                  <DesktopOutlined /> Desktop Notifications
+                </span>
+              }
+              bordered
+            >
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
                 <Form.Item
                   name="desktopEnabled"
@@ -194,7 +199,10 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
                     showIcon
                   />
                 )}
-                <Form.Item noStyle shouldUpdate={(prev, curr) => prev.desktopEnabled !== curr.desktopEnabled}>
+                <Form.Item
+                  noStyle
+                  shouldUpdate={(prev, curr) => prev.desktopEnabled !== curr.desktopEnabled}
+                >
                   {() => {
                     const enabled = form.getFieldValue('desktopEnabled');
                     return (
@@ -223,7 +231,14 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
             </Card>
           </Col>
           <Col span={12}>
-            <Card title={<span><SoundOutlined /> Toast & Audio</span>} bordered>
+            <Card
+              title={
+                <span>
+                  <SoundOutlined /> Toast & Audio
+                </span>
+              }
+              bordered
+            >
               <Form.Item
                 name="toastEnabled"
                 label="Enable Toast Notifications"
@@ -249,8 +264,8 @@ export const NotificationSettingsTab: React.FC<NotificationSettingsTabProps> = (
           <li>Hidden/minimized: desktop notification + toast + audio chime.</li>
         </ul>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Switch to “Always show desktop” to force OS notifications even while focused, or “Toast only”
-          to keep everything inside the Agor UI.
+          Switch to “Always show desktop” to force OS notifications even while focused, or “Toast
+          only” to keep everything inside the Agor UI.
         </Paragraph>
       </Card>
     </div>
