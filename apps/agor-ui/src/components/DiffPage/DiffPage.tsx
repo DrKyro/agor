@@ -37,6 +37,15 @@ interface DiffState {
 }
 
 export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) => {
+  // Early return for client check (before hooks to follow Rules of Hooks)
+  if (!client) {
+    return (
+      <div style={{ padding: '24px' }}>
+        <Typography.Text>Client not available</Typography.Text>
+      </div>
+    );
+  }
+
   const navigate = useNavigate();
   const { token } = theme.useToken();
   const [state, setState] = React.useState<DiffState>({
@@ -54,11 +63,6 @@ export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) =>
    * Load diff from the API
    */
   const loadDiff = React.useCallback(async (from?: string, to?: string) => {
-    if (!client) {
-      setState((prev) => ({ ...prev, error: 'No client available', loading: false }));
-      return;
-    }
-
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
@@ -167,14 +171,6 @@ export const DiffPage: React.FC<DiffPageProps> = ({ worktree, repo, client }) =>
   React.useEffect(() => {
     loadDiff();
   }, [loadDiff, worktree.worktree_id]);
-
-  if (!client) {
-    return (
-      <div style={{ padding: '24px' }}>
-        <Typography.Text>Client not available</Typography.Text>
-      </div>
-    );
-  }
 
   return (
     <div
