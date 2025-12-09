@@ -21,13 +21,15 @@ pnpm dev:ui-daemon
 
 ### 工作原理
 
-使用 shell 后台进程并行启动两个应用：
+使用 **Turbo TUI** 模式并行启动两个应用：
 
 ```bash
-(cd apps/agor-ui && pnpm dev) &     # 后台启动 UI
-(cd apps/agor-daemon && pnpm dev) & # 后台启动 Daemon
-wait                                 # 等待所有后台进程
+pnpm turbo run dev:ui dev:daemon
 ```
+
+- **Turbo 自动检测**: 只有 `agor-ui` 定义了 `dev:ui`，只有 `@agor/daemon` 定义了 `dev:daemon`
+- **TUI 界面**: 提供优雅的分屏显示，实时日志流
+- **颜色区分**: UI (cyan) 和 Daemon (magenta) 使用不同颜色
 
 ## 配置详情
 
@@ -39,7 +41,7 @@ wait                                 # 等待所有后台进程
 ```json
 {
   "scripts": {
-    "dev:ui-daemon": "(cd apps/agor-ui && pnpm dev) & (cd apps/agor-daemon && pnpm dev) & wait"
+    "dev:ui-daemon": "pnpm turbo run dev:ui dev:daemon"
   }
 }
 ```
@@ -49,7 +51,7 @@ wait                                 # 等待所有后台进程
 | 命令 | 启动的应用 | 界面 | 使用场景 |
 |------|-----------|------|----------|
 | `pnpm dev` | 所有包 (core + ui + daemon + docs) | Turbo TUI | 完整开发环境 |
-| `pnpm dev:ui-daemon` | 仅 UI + Daemon | 终端日志 | 专注核心功能开发 |
+| `pnpm dev:ui-daemon` | 仅 UI + Daemon | **Turbo TUI** ⭐ | 专注核心功能开发 |
 
 ## 启动的应用详情
 
@@ -77,13 +79,14 @@ wait                                 # 等待所有后台进程
    - 所有子进程会一起终止
 
 3. **日志输出**
-   - 两个应用的日志会混合在同一个终端
-   - 可以通过端口区分应用 (5173 vs 3030)
+   - **TUI 界面**: 使用分屏显示，每个应用独立面板
+   - **颜色区分**: UI (cyan) 和 Daemon (magenta)
+   - **端口**: UI (5173) 和 Daemon (3030) 独立端口
 
 4. **与 Turbo TUI 的关系**
-   - `pnpm dev` 使用 Turbo TUI，提供更优雅的分屏界面
-   - `pnpm dev:ui-daemon` 使用简单的后台进程，更轻量级
-   - 根据需求选择合适的命令
+   - `pnpm dev` 使用 Turbo TUI，启动所有包
+   - `pnpm dev:ui-daemon` **也使用 Turbo TUI**，只启动 UI + Daemon
+   - 两者都提供优雅的分屏界面，根据需求选择
 
 ## 使用场景推荐
 
@@ -116,16 +119,22 @@ lsof -i :3030  # Daemon 端口
 
 ## 示例输出
 
-启动后会看到类似这样的输出：
+启动后会看到类似这样的 **TUI 界面**：
 
 ```
-[UI]    VITE v7.x.x  ready in xxx ms
-[UI]    ➜  Local:   http://localhost:5173/
-[UI]    ➜  Network: http://xxx.xxx.xxx.xxx:5173/
-
-[Daemon]  Server running on http://localhost:3030
-[Daemon]  Core package watching for changes...
+┌─ agor-ui ───────────┐ ┌─ @agor/daemon ──────┐
+│  VITE v7.x.x        │ │  Server running      │
+│  ready in xxx ms    │ │  PORT: 3030          │
+│  ➜  :5173/         │ │  Core watching...    │
+│  [cyan panel]       │ │  [magenta panel]     │
+└─────────────────────┘ └──────────────────────┘
 ```
+
+**TUI 特性**:
+- ✨ 自动分屏布局
+- 🎨 颜色编码 (UI: cyan, Daemon: magenta)
+- 📊 实时日志流
+- 🔄 独立面板，可分别查看
 
 ## 故障排除
 
