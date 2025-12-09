@@ -47,8 +47,8 @@ export function useNotifications(
       const sessionName = context?.sessionName ?? defaultSessionName;
       const decision = computeNotificationDecision({
         strategy: notificationPrefs.strategy,
-        desktopEnabled: notificationPrefs.desktop?.enabled,
-        toastEnabled: notificationPrefs.toast?.enabled,
+        desktopEnabled: notificationPrefs.desktop.enabled,
+        toastEnabled: notificationPrefs.toast.enabled,
         desktopPermission,
       });
 
@@ -71,8 +71,8 @@ export function useNotifications(
           title: `${statusLabel}${sessionSuffix}`,
           body: summary,
           tag: `task-${task.task_id}`,
-          requireInteraction: notificationPrefs.desktop?.requireInteraction,
-          silent: notificationPrefs.desktop?.silent,
+          requireInteraction: notificationPrefs.desktop.requireInteraction ?? false,
+          silent: notificationPrefs.desktop.silent ?? false,
         });
       }
 

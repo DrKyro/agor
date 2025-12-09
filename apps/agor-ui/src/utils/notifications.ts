@@ -25,7 +25,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: Required<NotificationPreferences>
  */
 export function mergeNotificationPreferences(
   prefs?: NotificationPreferences | null
-): NotificationPreferences {
+): Required<NotificationPreferences> {
   return {
     strategy: prefs?.strategy ?? DEFAULT_NOTIFICATION_PREFERENCES.strategy,
     desktop: {
@@ -151,8 +151,8 @@ export function computeNotificationDecision(
 ): NotificationDecision {
   const {
     strategy = DEFAULT_NOTIFICATION_PREFERENCES.strategy,
-    desktopEnabled = DEFAULT_NOTIFICATION_PREFERENCES.desktop?.enabled ?? true,
-    toastEnabled = DEFAULT_NOTIFICATION_PREFERENCES.toast?.enabled ?? true,
+    desktopEnabled = DEFAULT_NOTIFICATION_PREFERENCES.desktop.enabled,
+    toastEnabled = DEFAULT_NOTIFICATION_PREFERENCES.toast.enabled,
     desktopPermission = getDesktopNotificationPermission(),
     engagementState = getEngagementState(),
   } = options;
