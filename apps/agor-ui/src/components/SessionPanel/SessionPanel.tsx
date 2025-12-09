@@ -32,7 +32,8 @@ import { getContextWindowGradient } from '../../utils/contextWindow';
 import { getSessionDisplayTitle, getSessionTitleStyles } from '../../utils/sessionTitle';
 import { compileTemplate } from '../../utils/templates';
 import { AutocompleteTextarea } from '../AutocompleteTextarea';
-import { FileUpload, FileUploadButton } from '../FileUpload';
+import { FileUploadButton } from '../FileUpload';
+import type { UploadedFile } from '../FileUpload';
 import { CreatedByTag } from '../metadata';
 import { PermissionModeSelector } from '../PermissionModeSelector';
 import {
@@ -47,6 +48,7 @@ import { ThinkingModeSelector } from '../ThinkingModeSelector';
 import { ToolIcon } from '../ToolIcon';
 import { VSCodeIcon } from '../VSCodeIcon';
 import { SessionPanelContent } from './SessionPanelContent';
+import { ACCESS_TOKEN_KEY } from '../../utils/tokenRefresh';
 
 // Re-export PermissionMode from SDK for convenience
 export type { PermissionMode };
@@ -55,6 +57,38 @@ export type { PermissionMode };
 const compiledSpawnSubsessionTemplate = compileTemplate<{ userPrompt: string }>(
   spawnSubsessionTemplate
 );
+
+const IMAGE_EXTENSION_REGEX = /\.(png|jpe?g|gif|bmp|webp|svg|heic|heif|tiff)$/i;
+
+const isImageMimeType = (mimeType?: string | null): boolean => {
+  return typeof mimeType === 'string' && mimeType.startsWith('image/');
+};
+
+const isImageFile = (file: File): boolean => {
+  if (isImageMimeType(file.type)) return true;
+  if (!file.name) return false;
+  return IMAGE_EXTENSION_REGEX.test(file.name.toLowerCase());
+};
+
+const ensureImageFileHasName = (file: File, index: number): File => {
+  if (file.name) return file;
+  const type = file.type && isImageMimeType(file.type) ? file.type : 'image/png';
+  const extension = type.split('/')[1] || 'png';
+  const normalizedExt = extension === 'jpeg' ? 'jpg' : extension;
+  const filename = `pasted-image-${Date.now()}-${index}.${normalizedExt}`;
+  return new File([file], filename, { type });
+};
+
+type ImageAttachmentStatus = 'uploading' | 'uploaded' | 'error';
+
+interface ImageAttachment {
+  id: string;
+  name: string;
+  previewUrl: string;
+  status: ImageAttachmentStatus;
+  path?: string;
+  error?: string;
+}
 
 export interface SessionPanelProps {
   client: AgorClient | null;
@@ -138,11 +172,190 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
   const [scrollToTop, setScrollToTop] = React.useState<(() => void) | null>(null);
   const [queuedMessages, setQueuedMessages] = React.useState<Message[]>([]);
   const [spawnModalOpen, setSpawnModalOpen] = React.useState(false);
-  const [uploadModalOpen, setUploadModalOpen] = React.useState(false);
-  const [droppedFiles, setDroppedFiles] = React.useState<File[]>([]);
+  const [imageAttachments, setImageAttachments] = React.useState<ImageAttachment[]>([]);
+  const previewUrlMapRef = React.useRef<Map<string, string>>(new Map());
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const daemonUrl = React.useMemo(() => getDaemonUrl(), []);
 
   const currentUser = currentUserId ? userById.get(currentUserId) || null : null;
   const { tasks } = useTasks(client, session?.session_id || null, currentUser, open);
+
+  const registerPreviewUrl = React.useCallback((attachmentId: string, url: string) => {
+    previewUrlMapRef.current.set(attachmentId, url);
+  }, []);
+
+  const revokePreviewUrl = React.useCallback((attachmentId: string) => {
+    const existingUrl = previewUrlMapRef.current.get(attachmentId);
+    if (existingUrl) {
+      URL.revokeObjectURL(existingUrl);
+      previewUrlMapRef.current.delete(attachmentId);
+    }
+  }, []);
+
+  const clearImageAttachments = React.useCallback(() => {
+    previewUrlMapRef.current.forEach((url) => URL.revokeObjectURL(url));
+    previewUrlMapRef.current.clear();
+    setImageAttachments([]);
+  }, []);
+
+  const insertFileMention = React.useCallback(
+    (filepath: string) => {
+      if (!filepath) return;
+      const mentionPath = filepath.includes(' ') ? `"${filepath}"` : filepath;
+      setInputValue((prev) => {
+        const needsSpace = prev.length > 0 && !/\s$/.test(prev);
+        const nextValue = `${prev}${needsSpace ? ' ' : ''}@${mentionPath}`;
+        if (session) {
+          draftsRef.current.set(session.session_id, nextValue);
+        }
+        return nextValue;
+      });
+    },
+    [session]
+  );
+
+  const uploadImageAttachment = React.useCallback(
+    async (attachmentId: string, file: File) => {
+      if (!session) return;
+
+      setImageAttachments((prev) =>
+        prev.map((attachment) =>
+          attachment.id === attachmentId
+            ? { ...attachment, status: 'uploading', error: undefined }
+            : attachment
+        )
+      );
+
+      try {
+        const formData = new FormData();
+        formData.append('files', file);
+        formData.append('notifyAgent', 'false');
+        formData.append('message', 'Please review this file: {filepath}');
+
+        const uploadUrl = `${daemonUrl}/sessions/${session.session_id}/upload?destination=worktree-temp`;
+        const headers: HeadersInit = {};
+        const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+        if (accessToken) {
+          headers.Authorization = `Bearer ${accessToken}`;
+        }
+
+        const response = await fetch(uploadUrl, {
+          method: 'POST',
+          headers,
+          body: formData,
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || 'Failed to upload image');
+        }
+
+        const result = await response.json();
+        const uploadedFiles: UploadedFile[] | undefined = result?.files;
+        const uploadedFile = Array.isArray(uploadedFiles) ? uploadedFiles[0] : undefined;
+        if (!uploadedFile) {
+          throw new Error('Upload response missing file metadata');
+        }
+
+        setImageAttachments((prev) =>
+          prev.map((attachment) =>
+            attachment.id === attachmentId
+              ? { ...attachment, status: 'uploaded', path: uploadedFile.path }
+              : attachment
+          )
+        );
+
+        insertFileMention(uploadedFile.path);
+        message.success(`图片已上传: ${uploadedFile.filename}`);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Failed to upload pasted image';
+        setImageAttachments((prev) =>
+          prev.map((attachment) =>
+            attachment.id === attachmentId ? { ...attachment, status: 'error', error: errorMessage } : attachment
+          )
+        );
+        message.error(errorMessage);
+      }
+    },
+    [daemonUrl, insertFileMention, message, session]
+  );
+
+  const handleFilesForUpload = React.useCallback(
+    (files: File[]) => {
+      if (!session) {
+        message.warning('请选择一个会话后再上传图片');
+        return;
+      }
+
+      if (connectionDisabled) {
+        message.warning('当前已离线，暂时无法上传图片');
+        return;
+      }
+
+      const validFiles = files
+        .filter((file) => isImageFile(file))
+        .map((file, index) => ensureImageFileHasName(file, index));
+
+      if (validFiles.length === 0) {
+        message.warning('仅支持图片粘贴/拖拽上传');
+        return;
+      }
+
+      validFiles.forEach((file) => {
+        const attachmentId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const previewUrl = URL.createObjectURL(file);
+        registerPreviewUrl(attachmentId, previewUrl);
+
+        setImageAttachments((prev) => [
+          ...prev,
+          {
+            id: attachmentId,
+            name: file.name,
+            previewUrl,
+            status: 'uploading',
+          },
+        ]);
+
+        uploadImageAttachment(attachmentId, file);
+      });
+    },
+    [connectionDisabled, message, registerPreviewUrl, session, uploadImageAttachment]
+  );
+
+  const handleFileInputChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (!event.target.files) return;
+      const selectedFiles = Array.from(event.target.files);
+      handleFilesForUpload(selectedFiles);
+      // Reset input so the same file can be selected again if needed
+      event.target.value = '';
+    },
+    [handleFilesForUpload]
+  );
+
+  const removeAttachment = React.useCallback(
+    (attachmentId: string) => {
+      revokePreviewUrl(attachmentId);
+      setImageAttachments((prev) => prev.filter((attachment) => attachment.id !== attachmentId));
+    },
+    [revokePreviewUrl]
+  );
+
+  const hasPendingImageUploads = React.useMemo(() => {
+    return imageAttachments.some((attachment) => attachment.status === 'uploading');
+  }, [imageAttachments]);
+
+  React.useEffect(() => {
+    return () => {
+      clearImageAttachments();
+    };
+  }, [clearImageAttachments]);
+
+  React.useEffect(() => {
+    clearImageAttachments();
+  }, [clearImageAttachments, session?.session_id]);
 
   // Fetch queued messages
   React.useEffect(() => {
@@ -322,6 +535,10 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
 
   const handleSendPrompt = async () => {
     if (!inputValue.trim()) return;
+    if (hasPendingImageUploads) {
+      message.warning('请等待图片上传完成');
+      return;
+    }
 
     const promptToSend = inputValue.trim();
 
@@ -344,10 +561,12 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
         message.success(`Message queued at position ${response.message.queue_position}`);
         setInputValue('');
         draftsRef.current.delete(session.session_id);
+        clearImageAttachments();
       } else {
         setInputValue('');
         draftsRef.current.delete(session.session_id);
         onSendPrompt?.(session.session_id, promptToSend, permissionMode);
+        clearImageAttachments();
       }
     } catch (error) {
       message.error(
@@ -539,11 +758,117 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
         style={{ width: '100%', position: 'relative', zIndex: 1 }}
         size={8}
       >
+        {imageAttachments.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: `${token.sizeUnit * 2}px`,
+              padding: `${token.sizeUnit * 2}px`,
+              border: `1px dashed ${token.colorBorder}`,
+              borderRadius: token.borderRadius,
+              background: token.colorBgContainerDisabled,
+            }}
+          >
+            {imageAttachments.map((attachment) => (
+              <div
+                key={attachment.id}
+                style={{
+                  width: 148,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: token.sizeUnit,
+                }}
+              >
+                <div
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    paddingBottom: '62%',
+                    background: token.colorFillAlter,
+                    borderRadius: token.borderRadius,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <img
+                    src={attachment.previewUrl}
+                    alt={attachment.name}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                    }}
+                  />
+                  <Button
+                    type="text"
+                    icon={<CloseOutlined />}
+                    size="small"
+                    style={{
+                      position: 'absolute',
+                      top: 4,
+                      right: 4,
+                      background: 'rgba(0,0,0,0.55)',
+                      color: 'white',
+                      borderRadius: '50%',
+                      minWidth: 24,
+                      width: 24,
+                      height: 24,
+                      padding: 0,
+                    }}
+                    onClick={() => removeAttachment(attachment.id)}
+                  />
+                  {attachment.status === 'uploading' && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: 'rgba(0, 0, 0, 0.45)',
+                      }}
+                    >
+                      <Spin size="small" />
+                    </div>
+                  )}
+                  {attachment.status === 'error' && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: 'rgba(0, 0, 0, 0.65)',
+                        padding: token.sizeUnit,
+                        textAlign: 'center',
+                      }}
+                    >
+                      <Typography.Text type="danger" style={{ color: 'white', fontSize: 12 }}>
+                        {attachment.error || '上传失败'}
+                      </Typography.Text>
+                    </div>
+                  )}
+                </div>
+                <Typography.Text ellipsis style={{ fontSize: token.fontSizeSM }}>
+                  {attachment.name}
+                </Typography.Text>
+                {attachment.status === 'uploading' && (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    正在上传...
+                  </Typography.Text>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         <AutocompleteTextarea
           value={inputValue}
           onChange={setInputValue}
           placeholder="Send a prompt, fork, or create a subsession... (type @ for autocomplete)"
-          autoSize={{ minRows: 1, maxRows: 10 }}
+          autoSize={{ minRows: 3, maxRows: 12 }}
           onKeyPress={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -555,11 +880,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
           client={client}
           sessionId={session?.session_id || null}
           userById={userById}
-          onFilesDrop={(files) => {
-            // Store dropped files and open modal
-            setDroppedFiles(files);
-            setUploadModalOpen(true);
-          }}
+          onFilesDrop={handleFilesForUpload}
         />
         <div
           style={{
@@ -679,18 +1000,36 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
                   disabled={connectionDisabled || isRunning}
                 />
               </Tooltip>
-              <Tooltip title="Upload Files">
-                <FileUploadButton
-                  onClick={() => setUploadModalOpen(true)}
-                  disabled={connectionDisabled}
-                />
+              <Tooltip title="添加图片">
+                <span style={{ display: 'inline-flex' }}>
+                  <FileUploadButton
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={connectionDisabled}
+                  />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={handleFileInputChange}
+                  />
+                </span>
               </Tooltip>
-              <Tooltip title={isRunning ? 'Queue Message' : 'Send Prompt'}>
+              <Tooltip
+                title={
+                  hasPendingImageUploads
+                    ? '图片上传中...'
+                    : isRunning
+                      ? 'Queue Message'
+                      : 'Send Prompt'
+                }
+              >
                 <Button
                   type="primary"
                   icon={<SendOutlined />}
                   onClick={handleSendPrompt}
-                  disabled={connectionDisabled || !inputValue.trim()}
+                  disabled={connectionDisabled || !inputValue.trim() || hasPendingImageUploads}
                 />
               </Tooltip>
             </Space.Compact>
@@ -835,32 +1174,6 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
           inputValue={inputValue}
           isOpen={open}
         />
-
-        {/* File upload modal */}
-        {session && (
-          <FileUpload
-            sessionId={session.session_id}
-            daemonUrl={getDaemonUrl()}
-            open={uploadModalOpen}
-            onClose={() => {
-              setUploadModalOpen(false);
-              setDroppedFiles([]); // Clear dropped files when modal closes
-            }}
-            initialFiles={droppedFiles}
-            onUploadComplete={(files) => {
-              console.log('Files uploaded:', files);
-              message.success(`Uploaded ${files.length} file(s)`);
-            }}
-            onInsertMention={(filepath) => {
-              // Insert @filepath mention into the textarea
-              setInputValue((prev) => {
-                const trimmed = prev.trim();
-                const separator = trimmed ? ' ' : '';
-                return `${trimmed}${separator}@${filepath}`;
-              });
-            }}
-          />
-        )}
       </div>
     </div>
   );
