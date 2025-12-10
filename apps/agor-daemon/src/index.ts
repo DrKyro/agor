@@ -139,16 +139,19 @@ import { createConfigService } from './services/config';
 import { createContextService } from './services/context';
 import { createFileService } from './services/file';
 import { createFilesService } from './services/files';
+import { createGitInfoService } from './services/git-info';
 import { createHealthMonitor } from './services/health-monitor';
 import { createLeaderboardService } from './services/leaderboard';
 import { createMCPServersService } from './services/mcp-servers';
 import { createMessagesService } from './services/messages';
+import { createQuickTaskService } from './services/quick-task';
 import { createReposService } from './services/repos';
 import { SchedulerService } from './services/scheduler';
 import { createSessionMCPServersService } from './services/session-mcp-servers';
 import { createSessionsService } from './services/sessions';
 import { createTasksService } from './services/tasks';
 import { TerminalsService } from './services/terminals';
+import { createTitleGenerationService } from './services/title-generation';
 import { createUsersService } from './services/users';
 import { setupWorktreeOwnersService } from './services/worktree-owners.js';
 import { createWorktreesService } from './services/worktrees';
@@ -1117,6 +1120,28 @@ async function main() {
 
   // Register repos service (accesses worktrees via app.service('worktrees'))
   app.use('/repos', createReposService(db, app));
+
+  // Auxiliary services used by Quick Task + UI helpers
+  app.use('/git-info', createGitInfoService(db));
+  app.service('git-info').hooks({
+    before: {
+      find: [requireAuth],
+    },
+  });
+
+  app.use('/title-generation', createTitleGenerationService(db));
+  app.service('title-generation').hooks({
+    before: {
+      create: [requireAuth],
+    },
+  });
+
+  app.use('/quick-task', createQuickTaskService(app, db));
+  app.service('quick-task').hooks({
+    before: {
+      create: [requireAuth],
+    },
+  });
 
   app.use('/mcp-servers', createMCPServersService(db));
 

@@ -13,9 +13,13 @@ import type {
   ContextFileListItem,
   MCPServer,
   Message,
+  QuickTaskRequest,
+  QuickTaskResponse,
   Repo,
+  RepoGitInfo,
   Session,
   Task,
+  TitleGenerationResult,
   User,
   VSCodeOpenResult,
   Worktree,
@@ -39,6 +43,14 @@ const DEFAULT_DAEMON_URL = `http://${DAEMON.DEFAULT_HOST}:${DAEMON.DEFAULT_PORT}
 const BOARDS_SERVICE_EXTENDED = Symbol('agor.boardsServiceExtended');
 
 /**
+ * Quick Task service interface
+ * Custom service that accepts QuickTaskRequest and returns QuickTaskResponse
+ */
+export interface QuickTaskService {
+  create(data: QuickTaskRequest, params?: Params): Promise<QuickTaskResponse>;
+}
+
+/**
  * Service interfaces for type safety
  */
 export interface ServiceTypes {
@@ -53,6 +65,9 @@ export interface ServiceTypes {
   users: User;
   'mcp-servers': MCPServer;
   context: ContextFileListItem | ContextFileDetail; // GET /context returns list, GET /context/:path returns detail
+  'git-info': RepoGitInfo;
+  'title-generation': TitleGenerationResult;
+  'quick-task': QuickTaskResponse;
 }
 
 /**
@@ -316,6 +331,9 @@ export interface AgorClient extends Omit<Application<ServiceTypes>, 'service'> {
   service(path: 'repos/local'): ReposLocalService;
   service(path: 'worktrees'): WorktreesService;
   service(path: 'boards'): BoardsService;
+  service(path: 'git-info'): AgorService<RepoGitInfo>;
+  service(path: 'title-generation'): AgorService<TitleGenerationResult>;
+  service(path: 'quick-task'): QuickTaskService;
 
   // Bulk operation endpoints
   service(path: 'messages/bulk'): MessagesService;
