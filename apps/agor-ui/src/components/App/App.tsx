@@ -7,6 +7,7 @@ import type {
   CreateUserInput,
   MCPServer,
   PermissionMode,
+  QuickTaskRequest,
   Repo,
   Session,
   SpawnConfig,
@@ -41,6 +42,8 @@ import { EventStreamPanel } from '../EventStreamPanel';
 import { NewSessionButton } from '../NewSessionButton';
 import { type NewSessionConfig, NewSessionModal } from '../NewSessionModal';
 import { type NewWorktreeConfig, NewWorktreeModal } from '../NewWorktreeModal';
+import { QuickTaskButton } from '../QuickTaskButton';
+import { type QuickTaskFormValues, QuickTaskModal } from '../QuickTaskModal';
 import { SessionCanvas, type SessionCanvasRef } from '../SessionCanvas';
 import { SessionPanel } from '../SessionPanel';
 import { SessionSettingsModal } from '../SessionSettingsModal';
@@ -194,10 +197,12 @@ export const App: React.FC<AppProps> = ({
   onLogout,
   onRetryConnection,
 }) => {
-  const { showWarning } = useThemedMessage();
+  const { showWarning, showSuccess, showError } = useThemedMessage();
   const sessionCanvasRef = useRef<SessionCanvasRef>(null);
   const [newSessionWorktreeId, setNewSessionWorktreeId] = useState<string | null>(null);
   const [newWorktreeModalOpen, setNewWorktreeModalOpen] = useState(false);
+  const [quickTaskModalOpen, setQuickTaskModalOpen] = useState(false);
+  const [quickTaskSubmitting, setQuickTaskSubmitting] = useState(false);
   const [newWorktreeDefaultPosition, setNewWorktreeDefaultPosition] = useState<{
     x: number;
     y: number;
@@ -357,6 +362,37 @@ export const App: React.FC<AppProps> = ({
     // If session was created successfully, open the drawer to show it
     if (sessionId) {
       setSelectedSessionId(sessionId);
+    }
+  };
+
+  const handleQuickTaskClick = () => {
+    if (repoById.size === 0) {
+      showWarning('Please create a repository first in Settings');
+      return;
+    }
+    setQuickTaskModalOpen(true);
+  };
+
+  const handleQuickTaskSubmit = async (values: QuickTaskFormValues) => {
+    if (!client) {
+      showError('Not connected to daemon');
+      return;
+    }
+
+    try {
+      setQuickTaskSubmitting(true);
+      const payload: QuickTaskRequest = {
+        ...values,
+        board_id: currentBoard?.board_id,
+      };
+      const result = await client.service('quick-task').create(payload);
+      showSuccess(`Quick task running in ${result.worktree.name}`);
+      setQuickTaskModalOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to start quick task';
+      showError(message);
+    } finally {
+      setQuickTaskSubmitting(false);
     }
   };
 
@@ -786,6 +822,10 @@ export const App: React.FC<AppProps> = ({
                           setSelectedCommentId((prev) => (prev === commentId ? null : commentId));
                         }}
                       />
+                      <QuickTaskButton
+                        onClick={handleQuickTaskClick}
+                        hasRepos={repoById.size > 0}
+                      />
                       <NewSessionButton
                         onClick={() => {
                           if (repoById.size === 0) {
@@ -881,6 +921,16 @@ export const App: React.FC<AppProps> = ({
               userById={userById}
             />
           )}
+          <QuickTaskModal
+            open={quickTaskModalOpen}
+            onClose={() => setQuickTaskModalOpen(false)}
+            repos={mapToArray(repoById)}
+            availableAgents={availableAgents}
+            client={client}
+            userById={userById}
+            submitting={quickTaskSubmitting}
+            onSubmit={handleQuickTaskSubmit}
+          />
           <SettingsModal
             open={settingsOpen}
             onClose={() => {

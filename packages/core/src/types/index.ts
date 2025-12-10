@@ -12,6 +12,7 @@ export * from './ide';
 export * from './mcp';
 export * from './message';
 export * from './presence';
+export * from './quick-task';
 export * from './repo';
 export * from './report';
 export type { ClaudeCodePermissionMode, CodexPermissionMode, PermissionMode } from './session';
