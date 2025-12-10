@@ -5,6 +5,7 @@ import {
   ClockCircleOutlined,
   CodeOutlined,
   DeleteOutlined,
+  DiffOutlined,
   DragOutlined,
   EditOutlined,
   ForkOutlined,
@@ -73,6 +74,7 @@ interface WorktreeCardProps {
   onOpenTerminal?: (commands: string[], worktreeId?: string) => void;
   onOpenVSCode?: (worktreeId: string) => void;
   onOpenCodeServer?: (worktreeId: string) => void;
+  onOpenDiff?: (worktreeId: string) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
   onViewLogs?: (worktreeId: string) => void;
@@ -103,6 +105,7 @@ const WorktreeCardComponent = ({
   onOpenTerminal,
   onOpenVSCode,
   onOpenCodeServer,
+  onOpenDiff,
   onStartEnvironment,
   onStopEnvironment,
   onViewLogs,
@@ -587,6 +590,18 @@ const WorktreeCardComponent = ({
                   onOpenSettings(worktree.worktree_id);
                 }}
                 title="Edit worktree"
+              />
+            )}
+            {onOpenDiff && (
+              <Button
+                type="text"
+                size="small"
+                icon={<DiffOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenDiff(worktree.worktree_id);
+                }}
+                title="View git diff"
               />
             )}
             {!inPopover && onArchiveOrDelete && (

@@ -37,6 +37,8 @@ export function useAgorClient(options: UseAgorClientOptions = {}): UseAgorClient
   const [connecting, setConnecting] = useState(!!accessToken || allowAnonymous); // Connecting if we have token OR anonymous is allowed
   const [error, setError] = useState<string | null>(null);
   const clientRef = useRef<AgorClient | null>(null);
+  // Throttle refresh attempts during rapid reconnects to avoid backend rate limit
+  const lastRefreshAttemptRef = useRef<number>(0);
 
   useEffect(() => {
     let mounted = true;
@@ -95,6 +97,13 @@ export function useAgorClient(options: UseAgorClientOptions = {}): UseAgorClient
                 const refreshToken = getStoredRefreshToken();
                 if (refreshToken) {
                   try {
+                    // Throttle: avoid hammering refresh endpoint if socket reconnects rapidly
+                    const now = Date.now();
+                    if (now - lastRefreshAttemptRef.current < 30_000) {
+                      throw new Error('Refresh throttled locally (retrying soon)');
+                    }
+                    lastRefreshAttemptRef.current = now;
+
                     const refreshResult = await refreshAndStoreTokens(client, refreshToken);
 
                     // Authenticate with new access token
@@ -112,6 +121,12 @@ export function useAgorClient(options: UseAgorClientOptions = {}): UseAgorClient
                     return;
                   } catch (refreshErr) {
                     console.error('❌ Refresh token also failed:', refreshErr);
+                    // If backend rate limited refresh attempts, back off locally to prevent user lockout
+                    const msg = (refreshErr as Error)?.message || '';
+                    if (msg.includes('Too many token refresh attempts')) {
+                      // Back off for ~20 seconds and let socket retry later
+                      await new Promise((r) => setTimeout(r, 20_000));
+                    }
                     // Fall through to error handling
                   }
                 }

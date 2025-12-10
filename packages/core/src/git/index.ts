@@ -10,6 +10,7 @@ import { mkdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { simpleGit } from 'simple-git';
+import type { GitDiffFile, GitDiffResult } from '../types/git-diff';
 
 /**
  * Get git binary path
@@ -660,3 +661,154 @@ export async function deleteWorktreeDirectory(worktreePath: string): Promise<voi
  * Allows other packages to use simple-git through @agor/core dependency
  */
 export { simpleGit };
+
+/**
+ * Get diff between two refs (commit, branch, or tag)
+ *
+ * @param worktreePath - Path to the worktree
+ * @param from - Starting ref (default: base_ref or HEAD)
+ * @param to - Ending ref (default: current worktree ref)
+ * @param filePath - Optional specific file to diff
+ * @returns GitDiffResult with file list and summary
+ */
+export async function getWorktreeDiff(
+  worktreePath: string,
+  from?: string,
+  to?: string,
+  filePath?: string
+): Promise<GitDiffResult> {
+  const git = createGit(worktreePath);
+
+  try {
+    // Build diff arguments
+    const args = ['--no-color'];
+
+    // Add file filter if specified
+    if (filePath) {
+      args.push('--', filePath);
+    }
+
+    // Get diff summary first (faster, gives us file list and stats)
+    const diffSummary = await git.diffSummary([`${from}..${to}`, ...args]);
+
+    // Parse diff summary into structured data
+    const files: GitDiffFile[] = diffSummary.files.map(
+      (file: {
+        file: string;
+        flags?: string[];
+        insertions?: number | string;
+        deletions?: number | string;
+        binary?: boolean;
+      }) => {
+        // Determine status based on file flags
+        let status: 'added' | 'modified' | 'deleted' | 'renamed' = 'modified';
+
+        if (file.flags && file.flags.includes('C')) {
+          status = 'renamed';
+        } else if (file.flags && file.flags.includes('D')) {
+          status = 'deleted';
+        } else if (file.flags && file.flags.includes('A')) {
+          status = 'added';
+        }
+
+        return {
+          path: file.file,
+          status,
+          additions: Number(file.insertions) || 0,
+          deletions: Number(file.deletions) || 0,
+          isBinary: Boolean(file.binary),
+        };
+      }
+    );
+
+    // Calculate summary
+    const summary = files.reduce(
+      (acc, file) => ({
+        total: acc.total + 1,
+        additions: acc.additions + file.additions,
+        deletions: acc.deletions + file.deletions,
+      }),
+      { total: 0, additions: 0, deletions: 0 }
+    );
+
+    return { files, summary };
+  } catch (error) {
+    console.error('Error getting worktree diff:', error);
+    throw new Error(
+      `Failed to get diff: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Get detailed diff output for a specific file or all files
+ *
+ * @param worktreePath - Path to the worktree
+ * @param from - Starting ref
+ * @param to - Ending ref
+ * @param filePath - Optional specific file to diff
+ * @returns Raw diff output as string
+ */
+export async function getWorktreeDiffOutput(
+  worktreePath: string,
+  from: string,
+  to: string,
+  filePath?: string
+): Promise<string> {
+  const git = createGit(worktreePath);
+
+  try {
+    const args = ['--no-color'];
+
+    // Add file filter if specified
+    if (filePath) {
+      args.push('--', filePath);
+    }
+
+    const diffOutput = await git.diff([`${from}..${to}`, ...args]);
+    return diffOutput;
+  } catch (error) {
+    console.error('Error getting diff output:', error);
+    throw new Error(
+      `Failed to get diff output: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Get list of available refs (branches, tags) for a repository
+ *
+ * @param repoPath - Path to the repository
+ * @returns Object with branches and tags
+ */
+export async function getAvailableRefs(repoPath: string): Promise<{
+  branches: string[];
+  tags: string[];
+  currentBranch?: string;
+}> {
+  const git = createGit(repoPath);
+
+  try {
+    const branches = await git.branchLocal();
+    const remoteBranches = await git.branch(['-r']);
+    const tags = await git.tags();
+
+    // Combine local and remote branches (remote ones are prefixed with 'origin/')
+    const allBranches = [
+      ...branches.all,
+      ...remoteBranches.all.filter((b) => !b.startsWith('origin/HEAD')),
+    ];
+
+    // Remove duplicates
+    const uniqueBranches = [...new Set(allBranches)];
+
+    return {
+      branches: uniqueBranches,
+      tags: tags.all,
+      currentBranch: branches.current,
+    };
+  } catch (error) {
+    console.error('Error getting available refs:', error);
+    return { branches: [], tags: [] };
+  }
+}

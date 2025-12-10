@@ -86,6 +86,7 @@ function AppContent() {
   const { token } = theme.useToken();
   const { getCurrentThemeConfig } = useTheme();
   const { showSuccess, showError, showLoading, showWarning } = useThemedMessage();
+  const navigate = useNavigate();
 
   // Fetch daemon auth configuration
   const {
@@ -916,6 +917,10 @@ function AppContent() {
     }
   };
 
+  const handleOpenDiff = (worktreeId: string) => {
+    navigate(`/diff/${worktreeId}`);
+  };
+
   // Handle MCP server CRUD
   const handleCreateMCPServer = async (data: CreateMCPServerInput) => {
     if (!client) return;
@@ -1088,6 +1093,35 @@ function AppContent() {
         {/* Demo route */}
         <Route path="/demo/streamdown" element={<StreamdownDemoPage />} />
 
+        {/* Diff page route */}
+        <Route
+          path="/diff/:worktreeId"
+          element={
+            <>
+              <SandboxBanner />
+              <AgorApp
+                client={client}
+                user={currentUser}
+                connected={connected}
+                connecting={connecting}
+                sessionById={sessionById}
+                sessionsByWorktree={sessionsByWorktree}
+                availableAgents={AVAILABLE_AGENTS}
+                boardById={boardById}
+                boardObjectById={boardObjectById}
+                commentById={commentById}
+                repoById={repoById}
+                worktreeById={worktreeById}
+                userById={userById}
+                mcpServerById={mcpServerById}
+                sessionMcpServerIds={sessionMcpServerIds}
+                initialBoardId={Array.from(boardById.values())[0]?.board_id}
+                onOpenDiff={handleOpenDiff}
+              />
+            </>
+          }
+        />
+
         {/* Mobile routes */}
         <Route
           path="/m/*"
@@ -1163,6 +1197,7 @@ function AppContent() {
                 onCreateWorktree={handleCreateWorktree}
                 onOpenVSCode={handleOpenVSCode}
                 onOpenCodeServer={handleOpenCodeServer}
+                onOpenDiff={handleOpenDiff}
                 onStartEnvironment={handleStartEnvironment}
                 onStopEnvironment={handleStopEnvironment}
                 onNukeEnvironment={handleNukeEnvironment}
@@ -1235,6 +1270,7 @@ function AppContent() {
                 onCreateWorktree={handleCreateWorktree}
                 onOpenVSCode={handleOpenVSCode}
                 onOpenCodeServer={handleOpenCodeServer}
+                onOpenDiff={handleOpenDiff}
                 onStartEnvironment={handleStartEnvironment}
                 onStopEnvironment={handleStopEnvironment}
                 onNukeEnvironment={handleNukeEnvironment}
@@ -1307,6 +1343,7 @@ function AppContent() {
                 onCreateWorktree={handleCreateWorktree}
                 onOpenVSCode={handleOpenVSCode}
                 onOpenCodeServer={handleOpenCodeServer}
+                onOpenDiff={handleOpenDiff}
                 onStartEnvironment={handleStartEnvironment}
                 onStopEnvironment={handleStopEnvironment}
                 onNukeEnvironment={handleNukeEnvironment}

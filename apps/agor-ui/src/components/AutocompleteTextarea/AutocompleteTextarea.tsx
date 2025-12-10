@@ -62,6 +62,19 @@ interface AutocompleteTextareaProps {
 // Minimum characters required after : before showing emoji picker (like Slack)
 const MIN_EMOJI_QUERY_LENGTH = 2;
 
+const IMAGE_EXTENSION_REGEX = /\.(png|jpe?g|gif|bmp|webp|svg|heic|heif|tiff)$/i;
+
+const isImageMimeType = (mimeType?: string | null): boolean => {
+  return typeof mimeType === 'string' && mimeType.startsWith('image/');
+};
+
+const isImageFile = (file: File, fallbackMimeType?: string): boolean => {
+  if (isImageMimeType(file.type)) return true;
+  if (isImageMimeType(fallbackMimeType)) return true;
+  if (!file.name) return false;
+  return IMAGE_EXTENSION_REGEX.test(file.name.toLowerCase());
+};
+
 /**
  * Check if a character is an emoji
  * Uses a simple heuristic: emojis are typically in the surrogate pair range or specific Unicode blocks
@@ -672,6 +685,55 @@ export const AutocompleteTextarea = React.forwardRef<
     );
 
     /**
+     * Handle clipboard image paste
+     */
+    const handlePaste = useCallback(
+      (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        if (!onFilesDrop) return;
+        const clipboardData = e.clipboardData;
+        if (!clipboardData) return;
+
+        const pastedFiles: File[] = [];
+        const seenKeys = new Set<string>();
+        const addFile = (file: File | null, fallbackType?: string) => {
+          if (!file || !isImageFile(file, fallbackType)) return;
+          const key = `${file.name}-${file.size}-${file.lastModified}`;
+          if (seenKeys.has(key)) return;
+          seenKeys.add(key);
+          pastedFiles.push(file);
+        };
+
+        // Prefer clipboard items to get mime info even if File.type is empty
+        const clipboardItems: DataTransferItem[] = [];
+        for (let index = 0; index < clipboardData.items.length; index += 1) {
+          const item = clipboardData.items[index];
+          if (item) {
+            clipboardItems.push(item);
+          }
+        }
+
+        if (clipboardItems.length > 0) {
+          clipboardItems.forEach((item) => {
+            if (item.kind === 'file') {
+              addFile(item.getAsFile(), item.type);
+            }
+          });
+        } else if (clipboardData.files && clipboardData.files.length > 0) {
+          Array.from(clipboardData.files).forEach((file) => {
+            addFile(file);
+          });
+        }
+
+        if (pastedFiles.length > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          onFilesDrop(pastedFiles);
+        }
+      },
+      [onFilesDrop]
+    );
+
+    /**
      * Render popover content
      */
     const popoverContent = (
@@ -910,6 +972,7 @@ export const AutocompleteTextarea = React.forwardRef<
               position: 'relative',
               zIndex: 1,
             }}
+            onPaste={handlePaste}
           />
         </div>
       </Popover>
