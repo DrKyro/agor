@@ -71,7 +71,7 @@ export class UserRepoEnvVarsService {
     }
 
     const rows = await query.all();
-    const results = rows.map((row) => this.rowToResponse(row));
+    const results = rows.map((row: typeof userRepoEnvVars.$inferSelect) => this.rowToResponse(row));
 
     return {
       total: results.length,
