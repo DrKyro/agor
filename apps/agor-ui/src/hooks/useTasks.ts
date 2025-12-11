@@ -3,6 +3,7 @@
  */
 
 import type { AgorClient } from '@agor/core/api';
+import { PAGINATION } from '@agor/core/config/browser';
 import { type SessionID, type Task, TaskStatus, type User } from '@agor/core/types';
 import { useCallback, useEffect, useState } from 'react';
 import { useNotifications } from './useNotifications';
@@ -52,7 +53,7 @@ export function useTasks(
       const result = await client.service('tasks').find({
         query: {
           session_id: sessionId,
-          $limit: 1000, // Fetch up to 1000 tasks
+          $limit: PAGINATION.DEFAULT_LIMIT,
           $sort: {
             created_at: 1, // Sort by creation time ascending
           },

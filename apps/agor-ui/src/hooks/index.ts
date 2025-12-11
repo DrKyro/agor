@@ -7,6 +7,7 @@ export * from './useLocalStorage';
 export * from './useMessages';
 export * from './useNotifications';
 export * from './useSessionActions';
+export * from './useSettingsRoute';
 export * from './useStreamingMessages';
 export * from './useTaskMessages';
 export * from './useTasks';

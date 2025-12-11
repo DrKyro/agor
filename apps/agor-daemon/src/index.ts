@@ -13,46 +13,24 @@ import { patchConsole } from '@agor/core/utils/logger';
 
 patchConsole();
 
-// Read package version once at startup (not on every /health request)
-// Use fs.readFile instead of import (works reliably with tsx and node)
-import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createUserProcessEnvironment, loadConfig, type UnknownJson } from '@agor/core/config';
+import { buildCorsConfig } from './setup/cors.js';
+import { initializeAnthropicApiKey } from './setup/credentials.js';
+import { initializeDatabase } from './setup/database.js';
+import { configureChannels, createSocketIOConfig } from './setup/socketio.js';
+// Phase 2: Configuration builders
+import { configureSwagger } from './setup/swagger.js';
+// Setup modules - extracted functions for daemon initialization
+// Phase 1: Pure functions
+import { loadDaemonVersion } from './setup/version.js';
 
-let DAEMON_VERSION = '0.0.0';
-try {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-
-  // Try to read from ../package.json (development) or ../../package.json (agor-live)
-  let pkgPath = join(__dirname, '../package.json');
-  let pkgData: string | undefined;
-
-  try {
-    pkgData = await readFile(pkgPath, 'utf-8');
-  } catch {
-    // If ../package.json doesn't exist, try ../../package.json (agor-live structure)
-    pkgPath = join(__dirname, '../../package.json');
-    try {
-      pkgData = await readFile(pkgPath, 'utf-8');
-    } catch {
-      // Silently fail - will use default version
-    }
-  }
-
-  if (pkgData) {
-    const pkg = JSON.parse(pkgData);
-    DAEMON_VERSION = pkg.version || DAEMON_VERSION;
-  }
-} catch (err) {
-  // Fallback if package.json can't be read
-  console.warn('⚠️  Could not read package.json for version - using fallback 0.0.0', err);
-}
+// Load daemon version at startup (extracted to setup/version.ts)
+const DAEMON_VERSION = await loadDaemonVersion(import.meta.url);
 
 import {
   and,
-  createDatabaseAsync,
   eq,
+  getDatabaseUrl,
   MCPServerRepository,
   MessagesRepository,
   RepoRepository,
@@ -102,6 +80,7 @@ import type {
   Message,
   Paginated,
   Params,
+  PermissionRequestContent,
   Session,
   SessionID,
   Task,
@@ -122,9 +101,7 @@ import compression from 'compression';
 import cors from 'cors';
 import express from 'express';
 import expressStaticGzip from 'express-static-gzip';
-import swagger from 'feathers-swagger';
 import jwt from 'jsonwebtoken';
-import type { Socket } from 'socket.io';
 import type {
   BoardsServiceImpl,
   MessagesServiceImpl,
@@ -193,62 +170,11 @@ interface RouteParams extends Params {
   user?: User;
 }
 
-/**
- * FeathersJS extends Socket.io socket with authentication context
- */
-interface FeathersSocket extends Socket {
-  feathers?: {
-    user?: User;
-  };
-}
-
-// Expand ~ to home directory in database path
-import { expandPath, extractDbFilePath } from '@agor/core/utils/path';
-
-// Determine database URL based on dialect preference
+// Determine database URL using centralized logic from @agor/core/db
 // Priority:
 // 1. If AGOR_DB_DIALECT=postgresql, use DATABASE_URL (required for Postgres)
 // 2. Otherwise, use AGOR_DB_PATH or default SQLite path
-// This prevents using DATABASE_URL when Postgres profile isn't active
-const DB_PATH =
-  process.env.AGOR_DB_DIALECT === 'postgresql'
-    ? process.env.DATABASE_URL || 'postgresql://localhost:5432/agor'
-    : expandPath(process.env.AGOR_DB_PATH || 'file:~/.agor/agor.db');
-
-/**
- * Initialize Gemini API key with OAuth fallback support
- *
- * Priority: config.yaml > env var
- * If no API key is found, GeminiTool will fall back to OAuth via Gemini CLI
- *
- * @param config - Application config object
- * @param envApiKey - GEMINI_API_KEY from process.env
- * @returns Resolved API key or undefined (triggers OAuth fallback)
- */
-export function initializeGeminiApiKey(
-  config: { credentials?: { GEMINI_API_KEY?: string } },
-  envApiKey?: string
-): string | undefined {
-  // Handle GEMINI_API_KEY with priority: config.yaml > env var
-  // Config service will update process.env when credentials change (hot-reload)
-  // GeminiTool will read fresh credentials dynamically via refreshAuth()
-  // If no API key is found, GeminiTool will fall back to OAuth via Gemini CLI
-  if (config.credentials?.GEMINI_API_KEY && !envApiKey) {
-    process.env.GEMINI_API_KEY = config.credentials.GEMINI_API_KEY;
-    console.log('✅ Set GEMINI_API_KEY from config for Gemini');
-  }
-
-  const geminiApiKey = config.credentials?.GEMINI_API_KEY || envApiKey;
-
-  if (!geminiApiKey) {
-    console.warn('⚠️  No GEMINI_API_KEY found - will use OAuth authentication');
-    console.warn('   To use API key: agor config set credentials.GEMINI_API_KEY <your-key>');
-    console.warn('   Or set GEMINI_API_KEY environment variable');
-    console.warn('   OAuth requires: gemini CLI installed and authenticated');
-  }
-
-  return geminiApiKey;
-}
+const DB_PATH = getDatabaseUrl();
 
 // Main async function
 async function main() {
@@ -298,80 +224,20 @@ async function main() {
   const envUiPort = process.env.UI_PORT ? Number.parseInt(process.env.UI_PORT, 10) : undefined;
   const UI_PORT = envUiPort || config.ui?.port || 5173;
 
-  // Handle ANTHROPIC_API_KEY with priority: config.yaml > env var
-  // Config service will update process.env when credentials change (hot-reload)
-  // Tools will read fresh credentials dynamically via getCredential() helper
-  if (config.credentials?.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-    process.env.ANTHROPIC_API_KEY = config.credentials.ANTHROPIC_API_KEY;
-    console.log('✅ Set ANTHROPIC_API_KEY from config for Claude Code');
-  }
-
-  const apiKey = config.credentials?.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
-
-  // Note: API key is optional - it can be configured per-tool or use Claude CLI's auth
-  // Only show info message if no key is found (not a warning since it's not required)
-  if (!apiKey) {
-    console.log('ℹ️  No ANTHROPIC_API_KEY found - will use Claude CLI auth if available');
-    console.log('   To use API key: agor config set credentials.ANTHROPIC_API_KEY <key>');
-    console.log('   Or run: claude login');
-  }
+  // Initialize Anthropic API key (extracted to setup/credentials.ts)
+  // Side effect: sets process.env.ANTHROPIC_API_KEY if found in config
+  initializeAnthropicApiKey(config, process.env.ANTHROPIC_API_KEY);
 
   // Create Feathers app
   const app = feathersExpress(feathers());
   app.set('agorConfig', config);
 
-  // Enable CORS for all REST API requests
-  // Support UI port and 3 additional ports (for parallel dev servers)
-  const corsOrigins = [
-    `http://localhost:${UI_PORT}`,
-    `http://localhost:${UI_PORT + 1}`,
-    `http://localhost:${UI_PORT + 2}`,
-    `http://localhost:${UI_PORT + 3}`,
-  ];
-
-  // SECURITY: Configure CORS based on deployment environment
-  let corsOrigin:
-    | boolean
-    | string[]
-    | ((
-        origin: string | undefined,
-        callback: (err: Error | null, allow?: boolean) => void
-      ) => void);
-
-  if (process.env.CORS_ORIGIN === '*') {
-    // Explicit wildcard - allow all origins (use with caution!)
-    console.warn('⚠️  CORS set to allow ALL origins (CORS_ORIGIN=*)');
-    corsOrigin = true;
-  } else if (process.env.CODESPACES === 'true') {
-    // Codespaces: Only allow GitHub Codespaces domains and localhost
-    console.log('🔒 CORS configured for GitHub Codespaces (*.github.dev, *.githubpreview.dev)');
-    corsOrigin = (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, Postman)
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      // Allow GitHub Codespaces domains
-      const allowedPatterns = [
-        /\.github\.dev$/,
-        /\.githubpreview\.dev$/,
-        /\.preview\.app\.github\.dev$/,
-        /^https?:\/\/localhost(:\d+)?$/,
-      ];
-
-      const isAllowed = allowedPatterns.some((pattern) => pattern.test(origin));
-
-      if (isAllowed) {
-        callback(null, true);
-      } else {
-        console.warn(`⚠️  CORS rejected origin: ${origin}`);
-        callback(new Error('Not allowed by CORS'));
-      }
-    };
-  } else {
-    // Local development: Allow localhost ports only
-    corsOrigin = corsOrigins;
-  }
+  // Configure CORS based on deployment environment (extracted to setup/cors.ts)
+  const { origin: corsOrigin } = buildCorsConfig({
+    uiPort: UI_PORT,
+    isCodespaces: process.env.CODESPACES === 'true',
+    corsOriginOverride: process.env.CORS_ORIGIN,
+  });
 
   app.use(
     cors({
@@ -461,280 +327,22 @@ async function main() {
     console.log('🔑 Loaded existing JWT secret from config:', `${jwtSecret.substring(0, 16)}...`);
   }
 
-  // Store Socket.io instance for graceful shutdown
-  let socketServer: import('socket.io').Server | null = null;
-
-  app.configure(
-    socketio(
-      {
-        cors: {
-          origin: corsOrigin,
-          methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-          credentials: true,
-        },
-        // Socket.io server options for better connection management
-        pingTimeout: 60000, // How long to wait for pong before considering connection dead
-        pingInterval: 25000, // How often to ping clients
-        maxHttpBufferSize: 1e6, // 1MB max message size
-        transports: ['websocket', 'polling'], // Prefer WebSocket
-      },
-      (io) => {
-        // Store Socket.io server instance for shutdown
-        socketServer = io;
-
-        // Track active connections for debugging
-        let activeConnections = 0;
-        let lastLoggedCount = 0;
-
-        // SECURITY: Add authentication middleware for WebSocket connections
-        io.use(async (socket, next) => {
-          try {
-            // Extract authentication token from handshake
-            // Clients can send token via:
-            // 1. socket.io auth object: io('url', { auth: { token: 'xxx' } })
-            // 2. Authorization header: io('url', { extraHeaders: { Authorization: 'Bearer xxx' } })
-            const token =
-              socket.handshake.auth?.token ||
-              socket.handshake.headers?.authorization?.replace('Bearer ', '');
-
-            if (!token) {
-              // SECURITY: Always allow unauthenticated socket connections
-              // This is required for the login flow to work (client needs to connect before authenticating)
-              // Service-level hooks (requireAuth) will enforce authentication for protected endpoints
-              // The /authentication endpoint explicitly allows unauthenticated access for login
-              if (allowAnonymous) {
-                console.log(
-                  `🔓 WebSocket connection without auth (anonymous allowed): ${socket.id}`
-                );
-              } else {
-                console.log(`🔓 WebSocket connection without auth (for login flow): ${socket.id}`);
-              }
-              // Don't set socket.feathers.user - will be handled by FeathersJS auth
-              return next();
-            }
-
-            // Verify JWT token
-            const decoded = jwt.verify(token, jwtSecret, {
-              issuer: 'agor',
-              audience: 'https://agor.dev',
-            }) as { sub: string; type: string };
-
-            if (decoded.type !== 'access') {
-              return next(new Error('Invalid token type'));
-            }
-
-            // Fetch user from database
-            const user = await app
-              .service('users')
-              .get(decoded.sub as import('@agor/core/types').UUID);
-
-            // Attach user to socket (FeathersJS convention)
-            (socket as FeathersSocket).feathers = { user };
-
-            console.log(
-              `🔐 WebSocket authenticated: ${socket.id} (user: ${user.user_id.substring(0, 8)})`
-            );
-            next();
-          } catch (error) {
-            console.error(`❌ WebSocket authentication failed for ${socket.id}:`, error);
-            next(new Error('Invalid or expired authentication token'));
-          }
-        });
-
-        // Configure Socket.io for cursor presence events
-        io.on('connection', (socket) => {
-          activeConnections++;
-          const user = (socket as FeathersSocket).feathers?.user;
-          console.log(
-            `🔌 Socket.io connection established: ${socket.id} (user: ${user ? user.user_id.substring(0, 8) : 'anonymous'}, total: ${activeConnections})`
-          );
-
-          // Log connection lifespan after 5 seconds to identify long-lived connections
-          setTimeout(() => {
-            if (socket.connected) {
-              console.log(
-                `⏱️  Socket ${socket.id} still connected after 5s (likely persistent connection)`
-              );
-            }
-          }, 5000);
-
-          // Helper to get user ID from socket's Feathers connection
-          const getUserId = () => {
-            // In FeathersJS, the authenticated user is stored in socket.feathers
-            const user = (socket as FeathersSocket).feathers?.user;
-            return user?.user_id || 'anonymous';
-          };
-
-          // Handle cursor movement events
-          socket.on('cursor-move', (data: import('@agor/core/types').CursorMoveEvent) => {
-            const userId = getUserId();
-
-            // Broadcast cursor position to all users on the same board except sender
-            const broadcastData = {
-              userId,
-              boardId: data.boardId,
-              x: data.x,
-              y: data.y,
-              timestamp: data.timestamp,
-            } as import('@agor/core/types').CursorMovedEvent;
-
-            socket.broadcast.emit('cursor-moved', broadcastData);
-          });
-
-          // Handle cursor leave events (user navigates away from board)
-          socket.on('cursor-leave', (data: import('@agor/core/types').CursorLeaveEvent) => {
-            const userId = getUserId();
-
-            socket.broadcast.emit('cursor-left', {
-              userId,
-              boardId: data.boardId,
-              timestamp: Date.now(),
-            });
-          });
-
-          // Track disconnections
-          socket.on('disconnect', (reason) => {
-            activeConnections--;
-            console.log(
-              `🔌 Socket.io disconnected: ${socket.id} (reason: ${reason}, remaining: ${activeConnections})`
-            );
-          });
-
-          // Handle socket errors
-          socket.on('error', (error) => {
-            console.error(`❌ Socket.io error on ${socket.id}:`, error);
-          });
-        });
-
-        // Log connection metrics only when count changes (every 30 seconds)
-        // FIX: Store interval handle to prevent memory leak
-        const metricsInterval = setInterval(() => {
-          if (activeConnections !== lastLoggedCount) {
-            console.log(`📊 Active WebSocket connections: ${activeConnections}`);
-            lastLoggedCount = activeConnections;
-          }
-        }, 30000);
-
-        // Ensure interval is cleared on shutdown
-        process.once('beforeExit', () => clearInterval(metricsInterval));
-      }
-    )
-  );
-
-  // Configure channels to broadcast events to authenticated clients
-  // Join all new connections to 'everybody' channel initially
-  app.on('connection', (connection: unknown) => {
-    app.channel('everybody').join(connection as never);
+  // Configure Socket.io with authentication and presence events (extracted to setup/socketio.ts)
+  const socketIOConfig = createSocketIOConfig(app, {
+    corsOrigin,
+    jwtSecret,
+    allowAnonymous,
   });
+  app.configure(socketio(socketIOConfig.serverOptions, socketIOConfig.callback));
 
-  // Note: The 'login' event is fired by FeathersJS authentication service
-  // However, socket re-authentication might not always trigger this event
-  // So we use a broadcast-all approach with the 'everybody' channel
-  app.on('login', (authResult: unknown, context: { connection?: unknown }) => {
-    if (context.connection) {
-      const result = authResult as { user?: { user_id?: string; email?: string } };
-      console.log('✅ Login event fired:', result.user?.user_id, result.user?.email);
-    }
-  });
+  // Configure channels for event broadcasting (extracted to setup/socketio.ts)
+  configureChannels(app);
 
-  app.on('logout', (_authResult: unknown, context: { connection?: unknown }) => {
-    if (context.connection) {
-      console.log('👋 Logout event fired');
-    }
-  });
+  // Configure Swagger for API documentation (extracted to setup/swagger.ts)
+  configureSwagger(app, { version: DAEMON_VERSION, port: DAEMON_PORT });
 
-  // Configure Swagger for API documentation
-  app.configure(
-    swagger({
-      openApiVersion: 3,
-      docsPath: '/docs',
-      docsJsonPath: '/docs.json',
-      ui: swagger.swaggerUI({ docsPath: '/docs' }),
-      specs: {
-        info: {
-          title: 'Agor API',
-          description: 'REST and WebSocket API for Agor agent orchestration platform',
-          version: DAEMON_VERSION,
-        },
-        servers: [{ url: `http://localhost:${DAEMON_PORT}`, description: 'Local daemon' }],
-        components: {
-          securitySchemes: {
-            BearerAuth: {
-              type: 'http',
-              scheme: 'bearer',
-              bearerFormat: 'JWT',
-            },
-          },
-        },
-        // Apply BearerAuth globally to all endpoints (except public endpoints like /health, /login)
-        security: [{ BearerAuth: [] }],
-      },
-    })
-  );
-
-  // Initialize database (auto-create if it doesn't exist)
-  console.log(`📦 Connecting to database: ${DB_PATH}`);
-
-  // Only handle file system setup for SQLite (file: URLs)
-  if (DB_PATH.startsWith('file:')) {
-    // Extract file path from DB_PATH (remove 'file:' prefix and expand ~)
-    const dbFilePath = extractDbFilePath(DB_PATH);
-    const dbDir = dbFilePath.substring(0, dbFilePath.lastIndexOf('/'));
-
-    // Ensure database directory exists
-    const { mkdir, access } = await import('node:fs/promises');
-    const { constants } = await import('node:fs');
-
-    try {
-      await access(dbDir, constants.F_OK);
-    } catch {
-      console.log(`📁 Creating database directory: ${dbDir}`);
-      await mkdir(dbDir, { recursive: true });
-    }
-
-    // Check if database file exists (create message if needed)
-    try {
-      await access(dbFilePath, constants.F_OK);
-    } catch {
-      console.log('🆕 Database does not exist - will create on first connection');
-    }
-  }
-
-  // Create database with foreign keys enabled
-  const db = await createDatabaseAsync({ url: DB_PATH });
-
-  // Check if migrations are needed
-  console.log('🔍 Checking database migration status...');
-  const { checkMigrationStatus, seedInitialData } = await import('@agor/core/db');
-  const migrationStatus = await checkMigrationStatus(db);
-
-  if (migrationStatus.hasPending) {
-    console.error('');
-    console.error('❌ Database migrations required!');
-    console.error('');
-    console.error(`   Found ${migrationStatus.pending.length} pending migration(s):`);
-    migrationStatus.pending.forEach((tag) => {
-      console.error(`     - ${tag}`);
-    });
-    console.error('');
-    console.error('⚠️  For safety, please backup your database before running migrations:');
-    console.error(`   cp ~/.agor/agor.db ~/.agor/agor.db.backup-$(date +%s)`);
-    console.error('');
-    console.error('Then run migrations with:');
-    console.error('   agor db migrate');
-    console.error('');
-    console.error('After migrations complete successfully, restart the daemon.');
-    console.error('');
-    process.exit(1);
-  }
-
-  console.log('✅ Database migrations up to date');
-
-  // Seed initial data (idempotent - only creates if missing)
-  console.log('🌱 Seeding initial data...');
-  await seedInitialData(db);
-
-  console.log('✅ Database ready');
+  // Initialize database with migrations and seeding (extracted to setup/database.ts)
+  const { db } = await initializeDatabase(DB_PATH);
 
   // Initialize session token service (ALWAYS needed for Feathers/WebSocket executor)
   const { SessionTokenService } = await import('./services/session-token-service.js');
@@ -1103,16 +711,23 @@ async function main() {
   // Only initialize if RBAC is enabled
   let unixIntegrationService: import('@agor/core/unix').UnixIntegrationService | null = null;
   if (worktreeRbacEnabled) {
-    const { createUnixIntegrationService } = await import('./services/unix-integration.js');
+    const { createUnixIntegrationService, getAgorDaemonUser } = await import(
+      './services/unix-integration.js'
+    );
     const unixEnabled =
       config.execution?.unix_user_mode !== 'simple' &&
       config.execution?.unix_user_mode !== undefined;
+
+    // Get daemon user - throws if Unix isolation enabled but not configured
+    const daemonUser = getAgorDaemonUser(config);
+
     unixIntegrationService = createUnixIntegrationService(db, {
       enabled: unixEnabled,
       autoManageSymlinks: unixEnabled,
+      daemonUser,
     });
     console.log(
-      `[Unix Integration] ${unixIntegrationService.isEnabled() ? 'Enabled' : 'Disabled'} (mode: ${config.execution?.unix_user_mode || 'simple'})`
+      `[Unix Integration] ${unixIntegrationService.isEnabled() ? 'Enabled' : 'Disabled'} (mode: ${config.execution?.unix_user_mode || 'simple'}, daemon user: ${daemonUser})`
     );
 
     // Register on app for access by other services (e.g., worktree-owners)
@@ -1747,6 +1362,24 @@ async function main() {
               ensureWorktreePermission('all', 'update worktrees'), // Require 'all' permission to update
             ]
           : []),
+        // Capture previous others_fs_access for comparison in after hook
+        ...(worktreeRbacEnabled && unixIntegrationService
+          ? [
+              async (context: HookContext) => {
+                const patchData = context.data as Partial<import('@agor/core/types').Worktree>;
+                const params = context.params as AuthenticatedParams & {
+                  _skipUnixSync?: boolean;
+                  _previousOthersFsAccess?: string;
+                };
+                if (Object.hasOwn(patchData, 'others_fs_access') && !params._skipUnixSync) {
+                  // Fetch current value to compare in after hook
+                  const worktree = await context.service.get(context.id);
+                  params._previousOthersFsAccess = worktree.others_fs_access;
+                }
+                return context;
+              },
+            ]
+          : []),
       ],
       remove: [
         ...(worktreeRbacEnabled
@@ -1790,6 +1423,81 @@ async function main() {
                     console.error('[Unix Integration] Failed to setup worktree group:', error);
                     // Continue - app-layer RBAC is still functional
                   }
+                }
+
+                return context;
+              },
+            ]
+          : []),
+      ],
+      patch: [
+        ...(worktreeRbacEnabled && unixIntegrationService
+          ? [
+              async (context: HookContext) => {
+                // Unix Integration: Update Unix permissions when others_fs_access changes
+                const params = context.params as AuthenticatedParams & {
+                  _skipUnixSync?: boolean;
+                  _previousOthersFsAccess?: string;
+                };
+
+                // Skip if this is a revert call from a failed chmod
+                if (params._skipUnixSync) {
+                  return context;
+                }
+
+                const patchData = context.data as Partial<import('@agor/core/types').Worktree>;
+
+                // Only proceed if others_fs_access was in the patch data
+                if (!Object.hasOwn(patchData, 'others_fs_access')) {
+                  return context;
+                }
+
+                const worktree = context.result as import('@agor/core/types').Worktree;
+
+                // Check if the value actually changed (avoid unnecessary chmod)
+                const previousValue = params._previousOthersFsAccess;
+                if (previousValue === worktree.others_fs_access) {
+                  console.log(
+                    `[Unix Integration] Worktree ${worktree.worktree_id.substring(0, 8)} others_fs_access unchanged (${previousValue}), skipping`
+                  );
+                  return context;
+                }
+
+                if (!worktree.path || !worktree.unix_group) {
+                  console.log(
+                    `[Unix Integration] Worktree ${worktree.worktree_id.substring(0, 8)} has no path or unix_group, skipping permission update`
+                  );
+                  return context;
+                }
+
+                try {
+                  console.log(
+                    `[Unix Integration] Updating permissions for worktree ${worktree.worktree_id.substring(0, 8)} (others_fs_access: ${previousValue} -> ${worktree.others_fs_access})`
+                  );
+                  await unixIntegrationService.setWorktreePermissions(
+                    worktree.worktree_id,
+                    worktree.path
+                  );
+                } catch (error) {
+                  // Security: If chmod fails, revert the DB change so UI doesn't show wrong state
+                  console.error(
+                    '[Unix Integration] Failed to update worktree permissions, reverting DB change:',
+                    error
+                  );
+                  if (previousValue !== undefined) {
+                    try {
+                      await context.service.patch(
+                        worktree.worktree_id,
+                        { others_fs_access: previousValue },
+                        { ...params, _skipUnixSync: true }
+                      );
+                    } catch (revertError) {
+                      console.error('[Unix Integration] Failed to revert DB change:', revertError);
+                    }
+                  }
+                  throw new Error(
+                    `Failed to update filesystem permissions: ${error instanceof Error ? error.message : String(error)}`
+                  );
                 }
 
                 return context;
@@ -1953,7 +1661,7 @@ async function main() {
       remove: [requireMinimumRole('admin', 'delete users')],
     },
     after: {
-      // After user create/patch: optionally ensure Unix user exists
+      // After user create/patch: optionally ensure Unix user exists and sync password
       create: [
         async (context: HookContext) => {
           const unixIntegration = app.get('unixIntegration') as
@@ -1976,6 +1684,17 @@ async function main() {
             // Don't fail the request - Agor user is already created
           }
 
+          // Sync password if plaintext is available (context.data contains original input)
+          const data = context.data as { password?: string };
+          if (data?.password) {
+            try {
+              await unixIntegration.syncPassword(user.user_id, data.password);
+            } catch (error) {
+              console.error('[Unix Integration] Failed to sync password on user creation:', error);
+              // Don't fail user creation if password sync fails
+            }
+          }
+
           return context;
         },
       ],
@@ -1988,20 +1707,28 @@ async function main() {
             return context;
           }
 
-          // Only handle if unix_username was just set
-          const data = context.data as { unix_username?: string };
-          if (!data?.unix_username) {
-            return context;
-          }
-
+          const data = context.data as { unix_username?: string; password?: string };
           const user = context.result as User;
 
-          try {
-            await unixIntegration.ensureUnixUser(user.user_id);
-            console.log(`[Unix Integration] Ensured Unix user for: ${user.unix_username}`);
-          } catch (error) {
-            console.error('[Unix Integration] Failed to create Unix user:', error);
-            // Don't fail the request - Agor user is already updated
+          // Handle unix_username changes (existing logic)
+          if (data?.unix_username) {
+            try {
+              await unixIntegration.ensureUnixUser(user.user_id);
+              console.log(`[Unix Integration] Ensured Unix user for: ${user.unix_username}`);
+            } catch (error) {
+              console.error('[Unix Integration] Failed to create Unix user:', error);
+              // Don't fail the request - Agor user is already updated
+            }
+          }
+
+          // Handle password changes
+          if (data?.password) {
+            try {
+              await unixIntegration.syncPassword(user.user_id, data.password);
+            } catch (error) {
+              console.error('[Unix Integration] Failed to sync password on update:', error);
+              // Don't fail patch if password sync fails
+            }
           }
 
           return context;
@@ -2010,9 +1737,9 @@ async function main() {
     },
   });
 
-  // Publish service events to all connected clients
-  // All services have requireAuth hooks, so only authenticated users can access them
-  // This means any connection that successfully calls a service is authenticated
+  // Publish service events to authenticated clients only
+  // SECURITY: Only connections in 'authenticated' channel (joined on login) receive events
+  // This prevents unauthenticated sockets from receiving sensitive data
   app.publish((data, context) => {
     // Skip logging for internal events without path/method (e.g., repository-triggered events)
     if (context.path && context.method) {
@@ -2021,11 +1748,11 @@ async function main() {
         context.id
           ? `id: ${typeof context.id === 'string' ? context.id.substring(0, 8) : context.id}`
           : '',
-        `channels: ${app.channel('everybody').length}`
+        `channels: ${app.channel('authenticated').length}`
       );
     }
-    // Broadcast to all connected clients (they're all authenticated due to requireAuth)
-    return app.channel('everybody');
+    // Broadcast only to authenticated clients (joined to channel on login)
+    return app.channel('authenticated');
   });
 
   // Add hooks to inject created_by from authenticated user and populate repo from worktree
@@ -3626,31 +3353,69 @@ async function main() {
    * NOTE: params argument may be empty when called from callback-triggered queue processing.
    * We reconstruct the original user's authentication context from message metadata.
    *
-   * IMPORTANT: Uses in-memory lock to prevent concurrent processing of the same session's queue,
-   * which would cause duplicate callback execution in race conditions.
+   * IMPORTANT: Uses promise-based lock to prevent concurrent processing of the same session's queue.
+   * Concurrent callers WAIT for the current processing to complete rather than skipping, which
+   * ensures we don't miss queued messages due to race conditions.
+   *
+   * SELF-HEALING: After each message is processed, we check for more queued messages.
+   * This ensures callbacks queued during processing are not missed.
    */
-  // In-memory lock to prevent concurrent queue processing for the same session
-  const queueProcessingLocks = new Set<SessionID>();
+  // Promise-based lock: maps session ID to the active processing promise
+  // We store the actual processing promise (with .catch() to prevent unhandled rejection)
+  // Concurrent callers wait on this promise then retry, ensuring no messages are missed
+  const queueProcessingLocks = new Map<SessionID, Promise<void>>();
+
+  // Track if a retry is already scheduled for a session (to avoid duplicate retries)
+  const queueRetryScheduled = new Set<SessionID>();
 
   async function processNextQueuedMessage(
     sessionId: SessionID,
     params: RouteParams
   ): Promise<void> {
     // Check if already processing queue for this session
-    if (queueProcessingLocks.has(sessionId)) {
+    const existingLock = queueProcessingLocks.get(sessionId);
+    if (existingLock) {
       console.log(
-        `⏭️  [Queue] Already processing queue for session ${sessionId.substring(0, 8)}, skipping duplicate call`
+        `⏳ [Queue] Processing in progress for session ${sessionId.substring(0, 8)}, waiting...`
       );
+      // Wait for current processing to complete (errors are already handled by the lock)
+      await existingLock;
+      // After waiting, schedule a retry (if not already scheduled)
+      // Use setImmediate to avoid deep recursion and allow other events to process
+      if (!queueRetryScheduled.has(sessionId)) {
+        queueRetryScheduled.add(sessionId);
+        setImmediate(async () => {
+          queueRetryScheduled.delete(sessionId);
+          try {
+            await processNextQueuedMessage(sessionId, params);
+          } catch (error) {
+            console.error(
+              `❌ [Queue] Retry failed for session ${sessionId.substring(0, 8)}:`,
+              error
+            );
+          }
+        });
+      }
       return;
     }
 
-    // Acquire lock
-    queueProcessingLocks.add(sessionId);
+    // Create the processing promise and store it as the lock
+    // CRITICAL: We attach .catch() to prevent unhandled rejection when no one is waiting
+    // The actual error is still thrown to the original caller via the unwrapped promise
+    const processingPromise = processNextQueuedMessageInternal(sessionId, params);
+
+    // Store with .catch() so if no one is awaiting, Node won't crash on rejection
+    queueProcessingLocks.set(
+      sessionId,
+      processingPromise.catch(() => {
+        // Swallow error for waiters - they'll retry anyway
+      })
+    );
 
     try {
-      await processNextQueuedMessageInternal(sessionId, params);
+      await processingPromise;
     } finally {
-      // Always release lock, even if processing fails
+      // Release lock
       queueProcessingLocks.delete(sessionId);
     }
   }
@@ -3692,8 +3457,12 @@ async function main() {
     const session = await sessionsService.get(sessionId, messageParams);
 
     if (session.status !== SessionStatus.IDLE) {
+      // Session is not idle, we cannot process the queue now.
+      // The session.patch after-hook will trigger queue processing when session becomes IDLE.
+      // Log this so we can track if messages are waiting.
       console.log(
-        `⚠️  Session ${sessionId.substring(0, 8)} is ${session.status}, skipping queue processing`
+        `⏸️  [Queue] Session ${sessionId.substring(0, 8)} is ${session.status}, message ${nextMessage.message_id.substring(0, 8)} waiting in queue ` +
+          `(will be processed when session becomes IDLE via patch hook)`
       );
       return;
     }
@@ -3782,7 +3551,8 @@ async function main() {
 
         const messageList = isPaginated(messages) ? messages.data : messages;
         const permissionMessage = messageList.find((msg: Message) => {
-          const content = msg.content as unknown as Record<string, unknown>;
+          // Type-safe access to permission request content
+          const content = msg.content as PermissionRequestContent;
           return content?.request_id === data.requestId;
         });
 
@@ -3790,11 +3560,28 @@ async function main() {
           throw new Error(`Permission request ${data.requestId} not found`);
         }
 
+        // Type-safe access to permission content
+        const permissionContent = permissionMessage.content as PermissionRequestContent;
+
+        // Resolve task_id with fallback for backward compatibility:
+        // 1. Try content.task_id (new messages)
+        // 2. Fall back to message.task_id (legacy messages or if content was missing it)
+        const resolvedTaskId = permissionContent.task_id || permissionMessage.task_id;
+
+        if (!resolvedTaskId) {
+          console.error(
+            `❌ [Permission] Cannot resolve permission: task_id missing from both content and message. requestId=${data.requestId}`
+          );
+          throw new Error(
+            'Cannot process permission decision: task_id is missing. This permission request may be corrupted.'
+          );
+        }
+
         // Update the message to mark it as approved/denied
         // This triggers the messages.patch hook which notifies the executor via IPC (legacy mode)
         await messagesService.patch(permissionMessage.message_id, {
           content: {
-            ...(permissionMessage.content as object),
+            ...permissionContent,
             status: data.allow ? 'approved' : 'denied',
             scope: data.scope,
             approved_by: data.decidedBy,
@@ -3807,12 +3594,11 @@ async function main() {
 
         // Emit permission_resolved event for Feathers/WebSocket executor architecture
         // IMPORTANT: Use camelCase property names to match executor's expectations
-        const content = permissionMessage.content as unknown as Record<string, unknown>;
         app.service('messages').emit('permission_resolved', {
-          requestId: data.requestId, // camelCase
-          taskId: content.task_id as string, // camelCase
-          sessionId: id, // camelCase (for consistency, though not used by executor)
-          allow: data.allow, // Correct property name (not "approved")
+          requestId: data.requestId,
+          taskId: resolvedTaskId, // Use resolved task_id with fallback for backward compat
+          sessionId: id,
+          allow: data.allow,
           reason: data.reason,
           remember: data.remember,
           scope: data.scope,
@@ -4806,6 +4592,7 @@ async function main() {
       schedulerService.stop();
 
       // Close Socket.io connections (this also closes the HTTP server)
+      const socketServer = socketIOConfig.getSocketServer();
       if (socketServer) {
         console.log('🔌 Closing Socket.io and HTTP server...');
         // Disconnect all active clients first

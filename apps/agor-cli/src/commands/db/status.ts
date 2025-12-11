@@ -2,8 +2,7 @@
  * `agor db status` - Show applied database migrations
  */
 
-import { createDatabase, isSQLiteDatabase, sql } from '@agor/core/db';
-import { expandPath } from '@agor/core/utils/path';
+import { createDatabase, getDatabaseUrl, isSQLiteDatabase, sql } from '@agor/core/db';
 import { Command } from '@oclif/core';
 import chalk from 'chalk';
 
@@ -32,11 +31,9 @@ export default class DbStatus extends Command {
     await this.parse(DbStatus);
 
     try {
-      // Determine database URL (same logic as daemon)
-      // Priority: DATABASE_URL > AGOR_DB_PATH > default SQLite path
-      const dbUrl =
-        process.env.DATABASE_URL || expandPath(process.env.AGOR_DB_PATH || 'file:~/.agor/agor.db');
-
+      // Determine database URL using centralized logic
+      // Priority: If AGOR_DB_DIALECT=postgresql, use DATABASE_URL; otherwise AGOR_DB_PATH
+      const dbUrl = getDatabaseUrl();
       const db = createDatabase({ url: dbUrl });
 
       // Check if migrations table exists

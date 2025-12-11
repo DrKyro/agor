@@ -156,6 +156,40 @@ export const UnixUserCommands = {
   deleteUser: (username: string) => `userdel "${username}"`,
 
   /**
+   * Get command array for setting Unix user password via chpasswd
+   *
+   * SECURITY: This returns a command array to be used with execWithInput().
+   * The password MUST be passed via stdin (not command-line arguments) to avoid:
+   * 1. Command injection vulnerabilities (shell metacharacters in password)
+   * 2. Password exposure in process listings (ps aux)
+   * 3. Password exposure in shell history
+   *
+   * Format for stdin: "username:password\n"
+   *
+   * @returns Command array for execWithInput: ['chpasswd']
+   *
+   * @example
+   * ```ts
+   * const cmd = UnixUserCommands.setPasswordCommand();
+   * await executor.execWithInput(cmd, { input: `${username}:${password}\n` });
+   * ```
+   */
+  setPasswordCommand: (): string[] => {
+    return ['chpasswd'];
+  },
+
+  /**
+   * Format stdin input for chpasswd command
+   *
+   * @param username - Unix username
+   * @param password - Plaintext password to set
+   * @returns Formatted stdin input: "username:password\n"
+   */
+  formatPasswordInput: (username: string, password: string): string => {
+    return `${username}:${password}\n`;
+  },
+
+  /**
    * Delete a Unix user and their home directory
    *
    * @param username - Unix username to delete
@@ -206,31 +240,45 @@ export const UnixUserCommands = {
   /**
    * Create directory with proper ownership
    *
+   * Returns an array of commands to be executed sequentially.
+   * Each command should be run with sudo separately (no sh -c wrapper needed).
+   *
    * @param path - Directory path to create
    * @param username - Owner username
    * @param group - Owner group (defaults to username)
    * @param mode - Permission mode (default: 755)
-   * @returns Command string
+   * @returns Array of command strings to execute sequentially
    */
-  createOwnedDirectory: (path: string, username: string, group?: string, mode: string = '755') => {
+  createOwnedDirectory: (
+    path: string,
+    username: string,
+    group?: string,
+    mode: string = '755'
+  ): string[] => {
     const grp = group || username;
-    // Wrap in sh -c so sudo elevates the entire command chain
-    return `sh -c 'mkdir -p "${path}" && chown "${username}:${grp}" "${path}" && chmod ${mode} "${path}"'`;
+    return [
+      `mkdir -p "${path}"`,
+      `chown "${username}:${grp}" "${path}"`,
+      `chmod ${mode} "${path}"`,
+    ];
   },
 
   /**
    * Setup Agor worktrees directory structure for a user
    *
-   * Creates ~/agor/worktrees with proper ownership
+   * Creates ~/agor/worktrees with proper ownership.
+   * Returns an array of commands to be executed sequentially.
    *
    * @param username - Unix username
    * @param homeBase - Home directory base
-   * @returns Command string
+   * @returns Array of command strings to execute sequentially
    */
-  setupWorktreesDir: (username: string, homeBase: string = AGOR_HOME_BASE) => {
+  setupWorktreesDir: (username: string, homeBase: string = AGOR_HOME_BASE): string[] => {
     const worktreesDir = `${homeBase}/${username}/${AGOR_WORKTREES_DIR}`;
-    // Wrap in sh -c so sudo elevates the entire command chain
-    return `sh -c 'mkdir -p "${worktreesDir}" && chown -R "${username}:${username}" "${homeBase}/${username}/agor"'`;
+    return [
+      `mkdir -p "${worktreesDir}"`,
+      `chown -R "${username}:${username}" "${homeBase}/${username}/agor"`,
+    ];
   },
 } as const;
 
@@ -265,19 +313,21 @@ export function unixUserExists(username: string): boolean {
 /**
  * Build command prefix for running commands as another Unix user
  *
- * This is the central utility for user impersonation via `sudo -u`.
+ * This is the central utility for user impersonation via `sudo -n -u`.
  * All code that needs to run commands as another user should use this.
+ *
+ * CRITICAL: Always includes -n flag to prevent password prompts that freeze the system.
  *
  * @param username - Unix username to impersonate (undefined = no impersonation)
  * @param validate - If true, throws UnixUserNotFoundError if user doesn't exist (default: true)
- * @returns Command prefix string (empty if no username, "sudo -u <user> " otherwise)
+ * @returns Command prefix string (empty if no username, "sudo -n -u <user> " otherwise)
  * @throws UnixUserNotFoundError if validate=true and user doesn't exist
  *
  * @example
  * ```ts
  * // Run a command as another user
  * const prefix = buildImpersonationPrefix('alice');
- * execSync(`${prefix}whoami`); // Runs: sudo -u alice whoami
+ * execSync(`${prefix}whoami`); // Runs: sudo -n -u alice whoami
  *
  * // No impersonation
  * const prefix = buildImpersonationPrefix(undefined);
@@ -299,7 +349,8 @@ export function buildImpersonationPrefix(
     throw new UnixUserNotFoundError(username);
   }
 
-  return `sudo -u ${username} `;
+  // CRITICAL: Use -n flag to prevent password prompts that freeze the system
+  return `sudo -n -u ${username} `;
 }
 
 /**

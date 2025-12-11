@@ -131,12 +131,12 @@ export type UserID = UUID;
 export type WorktreeID = UUID;
 
 /**
- * Repo identifier
+ * Repository identifier
  *
- * Uniquely identifies a git repository.
+ * Uniquely identifies a git repository registered with Agor.
  *
  * @example
- * const repoId: RepoID = "0193k1l2-3m4n-7o5p-a8f3-9d2e1c4b5a6f";
+ * const repoId: RepoID = "0193m1n2-3o4p-7q5r-a8f3-9d2e1c4b5a6f";
  */
 export type RepoID = UUID;
 

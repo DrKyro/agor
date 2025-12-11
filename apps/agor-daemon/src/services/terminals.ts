@@ -149,7 +149,8 @@ ${exportLines.join('\n')}
     // Without this, impersonated users can't source the env file (permission denied)
     if (chownTo) {
       try {
-        execSync(`sudo chown "${chownTo}" "${envFile}"`, { stdio: 'pipe' });
+        // CRITICAL: Use -n flag to prevent password prompts that freeze the system
+        execSync(`sudo -n chown "${chownTo}" "${envFile}"`, { stdio: 'pipe' });
       } catch (chownError) {
         console.warn(`Failed to chown env file to ${chownTo}:`, chownError);
         // Continue anyway - file may still be readable in some configurations
@@ -487,19 +488,23 @@ export class TerminalsService {
 
       console.log(`🔐 Running terminal as Unix user: ${finalUnixUser} (${impersonationReason})`);
 
-      const sudoArgs = ['-u', finalUnixUser, 'zellij', 'attach', zellijSession, '--create'];
-
-      ptyProcess = pty.spawn('sudo', sudoArgs, {
-        name: 'xterm-256color',
-        cols: data.cols || 80,
-        rows: data.rows || 30,
-        cwd,
-        env: {
-          ...env,
-          HOME: targetHome,
-          USER: finalUnixUser,
-        },
-      });
+      // Build sudo args for pty.spawn (requires array, not string)
+      // CRITICAL: Use -n flag to prevent password prompts that freeze the system
+      ptyProcess = pty.spawn(
+        'sudo',
+        ['-n', '-u', finalUnixUser, 'zellij', 'attach', zellijSession, '--create'],
+        {
+          name: 'xterm-256color',
+          cols: data.cols || 80,
+          rows: data.rows || 30,
+          cwd,
+          env: {
+            ...env,
+            HOME: targetHome,
+            USER: finalUnixUser,
+          },
+        }
+      );
     } else {
       // No impersonation - run Zellij as daemon user
       console.log(`🔓 Running terminal as daemon user (${impersonationReason})`);

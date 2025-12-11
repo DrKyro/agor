@@ -4,7 +4,7 @@
 
 import { isDaemonRunning } from '@agor/core/api';
 import { getDaemonUrl } from '@agor/core/config';
-import { checkMigrationStatus, createLocalDatabase } from '@agor/core/db';
+import { checkMigrationStatus, createDatabase, getDatabaseUrl } from '@agor/core/db';
 import { extractDbFilePath } from '@agor/core/utils/path';
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
@@ -77,12 +77,12 @@ export default class DaemonStart extends Command {
 
     // Check for pending migrations before starting daemon
     try {
-      const db = createLocalDatabase();
+      const dbUrl = getDatabaseUrl();
+      const db = createDatabase({ url: dbUrl });
       const migrationStatus = await checkMigrationStatus(db);
 
       if (migrationStatus.hasPending) {
-        const dbPath = process.env.AGOR_DB_PATH || 'file:~/.agor/agor.db';
-        const dbFilePath = extractDbFilePath(dbPath);
+        const dbFilePath = extractDbFilePath(dbUrl);
 
         this.log(chalk.red('✗ Database migrations required'));
         this.log('');

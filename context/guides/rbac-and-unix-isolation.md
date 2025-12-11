@@ -200,12 +200,14 @@ Before enabling RBAC + Unix integration, ensure:
    - Creating Unix groups (via `agor unix-integration ensure-group`)
    - Setting filesystem permissions (`chown`, `chmod`)
 
-2. **Sudoers configuration** - Add Agor daemon user to sudoers:
+2. **Sudoers configuration** - Install the Agor sudoers file:
    ```bash
-   # /etc/sudoers.d/agor
-   agor ALL=(ALL) NOPASSWD: /usr/local/bin/agor unix-integration *
+   # Download and install
+   curl -O https://raw.githubusercontent.com/preset-io/agor/main/docker/sudoers/agor-daemon.sudoers
+   sudo visudo -c -f ./agor-daemon.sudoers  # Validate first!
+   sudo install -m 0440 ./agor-daemon.sudoers /etc/sudoers.d/agor
    ```
-   *(Adjust path if `agor` is installed elsewhere)*
+   See [docker/sudoers/agor-daemon.sudoers](../../docker/sudoers/agor-daemon.sudoers) for the full, well-documented configuration.
 
 3. **User management strategy** - Decide:
    - Will you create Unix users manually or let Agor manage them?
@@ -322,25 +324,34 @@ agor daemon start
 
 #### 3. Configure Sudoers (Required for Unix Integration)
 
-Create sudoers file for Agor:
+We provide a comprehensive, well-documented sudoers template:
+
+**Reference file:** [`docker/sudoers/agor-daemon.sudoers`](../../docker/sudoers/agor-daemon.sudoers)
 
 ```bash
-sudo visudo -f /etc/sudoers.d/agor
+# Download and validate
+curl -O https://raw.githubusercontent.com/preset-io/agor/main/docker/sudoers/agor-daemon.sudoers
+sudo visudo -c -f ./agor-daemon.sudoers
+
+# Install (replace 'agor' in filename if using different daemon user)
+sudo install -m 0440 ./agor-daemon.sudoers /etc/sudoers.d/agor
 ```
 
-Add these lines (replace `agor` with your daemon user):
-```
-# Allow Agor daemon to manage Unix users/groups for RBAC
-agor ALL=(ALL) NOPASSWD: /usr/local/bin/agor unix-integration ensure-user *
-agor ALL=(ALL) NOPASSWD: /usr/local/bin/agor unix-integration ensure-group *
-agor ALL=(ALL) NOPASSWD: /usr/local/bin/agor unix-integration add-user-to-group *
-agor ALL=(ALL) NOPASSWD: /usr/local/bin/agor unix-integration remove-user-from-group *
-```
+The sudoers file enables:
+- **User impersonation** - Run agents as the user who created the session
+- **User/group management** - Create Unix users/groups for RBAC
+- **Filesystem operations** - Set permissions on worktree directories
+- **No TTY mode** - Essential for daemon operation
+
+**Key security properties:**
+- Only `agor_users` group members can be impersonated (prevents root escalation)
+- All operations logged to `/var/log/auth.log`
+- Well-documented with troubleshooting tips
 
 **Test sudo access:**
 ```bash
-sudo -u agor sudo /usr/local/bin/agor unix-integration ensure-user test-user
-# Should create user without password prompt
+sudo -l -U agor
+# Should show permitted commands without password prompt
 ```
 
 #### 4. Create Unix Users for Agor Users
@@ -709,21 +720,30 @@ sudo chmod -R 770 /var/agor/worktrees/abc123
 
 ### Sudo Password Prompts
 
-**Symptom**: Daemon logs show "sudo: a password is required"
+**Symptom**: Daemon logs show "sudo: a password is required" or process hangs
 
-**Cause**: Sudoers not configured for passwordless sudo
+**Cause**: Sudoers not configured for passwordless sudo, or missing `!requiretty`
 
 **Fix:**
 ```bash
-sudo visudo -f /etc/sudoers.d/agor
-# Ensure NOPASSWD is set (see step 3 of setup)
+# Re-install the sudoers file
+sudo install -m 0440 /path/to/agor-daemon.sudoers /etc/sudoers.d/agor
+
+# Verify NOPASSWD and !requiretty are set
+sudo grep -E '(NOPASSWD|requiretty)' /etc/sudoers.d/agor
 ```
 
 **Verify:**
 ```bash
-sudo -u agor sudo /usr/local/bin/agor unix-integration ensure-user test
-# Should not prompt for password
+# Check what the daemon user can do
+sudo -l -U agor
+
+# Test non-interactive sudo (the -n flag is critical!)
+sudo -u agor sudo -n id
+# Should output uid/gid without password prompt
 ```
+
+**Important**: All code calling sudo MUST use the `-n` flag (`sudo -n`) to fail fast instead of hanging if TTY is required.
 
 ### Orphaned Worktrees
 

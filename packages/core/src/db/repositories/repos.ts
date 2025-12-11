@@ -34,6 +34,7 @@ export class RepoRepository implements BaseRepository<Repo, Partial<Repo>> {
       repo_id: row.repo_id as UUID,
       slug: row.slug,
       repo_type: (row.repo_type as Repo['repo_type']) ?? 'remote',
+      unix_group: row.unix_group ?? undefined,
       created_at: new Date(row.created_at).toISOString(),
       last_updated: row.updated_at
         ? new Date(row.updated_at).toISOString()
@@ -140,6 +141,7 @@ export class RepoRepository implements BaseRepository<Repo, Partial<Repo>> {
       created_at: new Date(repo.created_at ?? now),
       updated_at: repo.last_updated ? new Date(repo.last_updated) : new Date(now),
       repo_type: repo.repo_type,
+      unix_group: repo.unix_group ?? null,
       data: mergedData,
     };
   }
@@ -354,6 +356,7 @@ export class RepoRepository implements BaseRepository<Repo, Partial<Repo>> {
             slug: insertData.slug,
             updated_at: new Date(),
             repo_type: insertData.repo_type,
+            unix_group: merged.unix_group ?? null,
             data: insertData.data,
           })
           .where(eq(repos.repo_id, fullId))

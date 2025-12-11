@@ -278,6 +278,24 @@ export type Database =
 export const DEFAULT_DB_PATH = 'file:~/.agor/agor.db';
 
 /**
+ * Resolve database URL from environment variables
+ *
+ * Priority:
+ * 1. If AGOR_DB_DIALECT=postgresql, use DATABASE_URL (required for Postgres)
+ * 2. Otherwise, use AGOR_DB_PATH or default SQLite path
+ *
+ * This ensures consistent database URL resolution across CLI and daemon.
+ *
+ * @returns Database URL string
+ */
+export function getDatabaseUrl(): string {
+  if (process.env.AGOR_DB_DIALECT === 'postgresql') {
+    return process.env.DATABASE_URL || 'postgresql://localhost:5432/agor';
+  }
+  return expandPath(process.env.AGOR_DB_PATH || DEFAULT_DB_PATH);
+}
+
+/**
  * Create database with default local configuration
  */
 export function createLocalDatabase(customPath?: string): Database {

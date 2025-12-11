@@ -13,6 +13,7 @@ import {
   extractSlugFromUrl,
   isValidGitUrl,
   isValidSlug,
+  PAGINATION,
   parseAgorYml,
   resolveUserEnvironment,
   resolveWorktreeEnvironment,
@@ -36,10 +37,12 @@ import type {
   QueryParams,
   Repo,
   RepoEnvironmentConfig,
+  RepoID,
   RepoSlug,
   UserID,
   Worktree,
 } from '@agor/core/types';
+import type { UnixIntegrationService } from '@agor/core/unix';
 import { DrizzleService } from '../adapters/drizzle';
 
 /**
@@ -104,8 +107,8 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
       id: 'repo_id',
       resourceType: 'Repo',
       paginate: {
-        default: 50,
-        max: 100,
+        default: PAGINATION.DEFAULT_LIMIT,
+        max: PAGINATION.MAX_LIMIT,
       },
     });
 
@@ -119,6 +122,27 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
    */
   async findBySlug(slug: string, _params?: RepoParams): Promise<Repo | null> {
     return this.repoRepo.findBySlug(slug);
+  }
+
+  /**
+   * Helper: Initialize repo Unix group if Unix integration is enabled
+   *
+   * Creates the repo group and sets .git permissions.
+   * Called after repo creation (clone or local add).
+   */
+  private async initializeRepoGroup(repoId: RepoID): Promise<void> {
+    const unixIntegration = this.app.get('unixIntegration') as UnixIntegrationService | undefined;
+    if (!unixIntegration?.isEnabled()) {
+      return;
+    }
+
+    try {
+      await unixIntegration.createRepoGroup(repoId);
+      console.log(`[Unix Integration] Created repo group for ${repoId.substring(0, 8)}`);
+    } catch (error) {
+      console.error('[Unix Integration] Failed to create repo group:', error);
+      // Don't fail the request - repo is already created, group can be synced later
+    }
   }
 
   /**
@@ -168,7 +192,7 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
     }
 
     // Create database record
-    return this.create(
+    const repo = (await this.create(
       {
         repo_type: 'remote',
         slug,
@@ -179,7 +203,12 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
         environment_config: environmentConfig || undefined,
       },
       params
-    ) as Promise<Repo>;
+    )) as Repo;
+
+    // Initialize Unix group for the repo (if enabled)
+    await this.initializeRepoGroup(repo.repo_id as RepoID);
+
+    return repo;
   }
 
   /**
@@ -245,7 +274,7 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
     const remoteUrl = (await getRemoteUrl(repoPath)) ?? undefined;
     const name = slug.split('/').pop() ?? slug;
 
-    return this.create(
+    const repo = (await this.create(
       {
         repo_type: 'local',
         slug,
@@ -256,7 +285,12 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
         environment_config: environmentConfig,
       },
       params
-    ) as Promise<Repo>;
+    )) as Repo;
+
+    // Initialize Unix group for the repo (if enabled)
+    await this.initializeRepoGroup(repo.repo_id as RepoID);
+
+    return repo;
   }
 
   /**
@@ -299,6 +333,26 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
 
     if (userId) {
       userEnv = await resolveUserEnvironment(userId, this.db);
+    }
+
+    // Ensure authenticated user is in repo group BEFORE creating worktree
+    // This is required because gitCreateWorktree needs to read/write .git/config
+    // Note: The daemon user is already added to the repo group when it's created (see createRepoGroup)
+    // and by sync-unix for existing repos. Authenticated users need to be added dynamically.
+    const unixIntegration = this.app.get('unixIntegration') as UnixIntegrationService | undefined;
+    if (unixIntegration?.isEnabled() && userId) {
+      try {
+        // Add authenticated user to repo group (for their own file access)
+        await unixIntegration.addUserToRepoGroup(repo.repo_id, userId);
+        console.log(
+          `[Unix Integration] Added user ${userId.substring(0, 8)} to repo ${repo.repo_id.substring(0, 8)} group (pre-worktree-create)`
+        );
+      } catch (error) {
+        // Fail fast - without repo group access, gitCreateWorktree will fail with "permission denied"
+        throw new Error(
+          `Failed to grant repo access for worktree creation: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
 
     await gitCreateWorktree(

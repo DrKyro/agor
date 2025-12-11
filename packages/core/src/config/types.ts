@@ -61,6 +61,11 @@ export interface AgorDaemonSettings {
 
   /** Enable built-in MCP server (default: true) */
   mcpEnabled?: boolean;
+
+  /** Unix user the daemon runs as. Used to ensure daemon has access to all Unix groups.
+   * Required when Unix isolation is enabled (worktree_rbac or unix_user_mode).
+   * In dev mode without isolation, falls back to current process user. */
+  unix_user?: string;
 }
 
 /**
@@ -164,6 +169,9 @@ export interface AgorExecutionSettings {
 
   /** Maximum session token uses (default: 1 = single-use, -1 = unlimited) */
   session_token_max_uses?: number;
+
+  /** Sync web passwords to Unix user passwords (default: true). When enabled, passwords are synced on user creation/update. */
+  sync_unix_passwords?: boolean;
 }
 
 /**
