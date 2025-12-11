@@ -12,6 +12,7 @@ import { Modal, Tabs } from 'antd';
 import { useState } from 'react';
 import { mapToArray } from '@/utils/mapHelpers';
 import { DiffTab } from './tabs/DiffTab';
+import { EnvTab } from './tabs/EnvTab';
 import { EnvironmentTab } from './tabs/EnvironmentTab';
 import { FilesTab } from './tabs/FilesTab';
 import { GeneralTab, type WorktreeUpdate } from './tabs/GeneralTab';
@@ -104,6 +105,18 @@ export const WorktreeModal: React.FC<WorktreeModalProps> = ({
                 repo={repo}
                 client={client}
                 onUpdateRepo={onUpdateRepo}
+                onUpdateWorktree={onUpdateWorktree}
+              />
+            ),
+          },
+          {
+            key: 'env',
+            label: 'Env Vars',
+            children: (
+              <EnvTab
+                worktree={worktree}
+                repo={repo}
+                client={client}
                 onUpdateWorktree={onUpdateWorktree}
               />
             ),

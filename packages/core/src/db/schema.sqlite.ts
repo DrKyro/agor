@@ -349,6 +349,12 @@ export const repos = sqliteTable(
             url_template?: string; // Handlebars template
           };
         };
+        // Repo-level default environment variables (encrypted values)
+        // These are available to all users of the repo (lowest priority after system)
+        env_vars?: Record<string, string>;
+        // Environment file name for worktrees (e.g., '.env', '.env.local')
+        // Used when writing env vars to files in worktree directories
+        env_file_name?: string;
       }>()
       .notNull(),
   },
@@ -920,3 +926,41 @@ export type BoardObjectRow = typeof boardObjects.$inferSelect;
 export type BoardObjectInsert = typeof boardObjects.$inferInsert;
 export type BoardCommentRow = typeof boardComments.$inferSelect;
 export type BoardCommentInsert = typeof boardComments.$inferInsert;
+
+/**
+ * User-Repo Environment Variables table
+ *
+ * Stores per-user, per-repo environment variables.
+ * These override user global env vars but are overridden by worktree env vars.
+ *
+ * Priority (from low to high):
+ * 1. System env vars (process.env)
+ * 2. Repo default env vars (repos.data.env_vars)
+ * 3. User global env vars (users.data.env_vars)
+ * 4. User-repo env vars (THIS TABLE)
+ * 5. Worktree env vars (worktrees.data.env_vars)
+ */
+export const userRepoEnvVars = sqliteTable(
+  'user_repo_env_vars',
+  {
+    id: text('id', { length: 36 }).primaryKey(),
+    user_id: text('user_id', { length: 36 })
+      .notNull()
+      .references(() => users.user_id, { onDelete: 'cascade' }),
+    repo_id: text('repo_id', { length: 36 })
+      .notNull()
+      .references(() => repos.repo_id, { onDelete: 'cascade' }),
+    // JSON blob of encrypted environment variables
+    env_vars: t.json<Record<string, string>>('env_vars').notNull(),
+    created_at: t.timestamp('created_at').notNull(),
+    updated_at: t.timestamp('updated_at').notNull(),
+  },
+  (table) => ({
+    userRepoUnique: index('user_repo_env_vars_user_repo_unique').on(table.user_id, table.repo_id),
+    userIdx: index('user_repo_env_vars_user_idx').on(table.user_id),
+    repoIdx: index('user_repo_env_vars_repo_idx').on(table.repo_id),
+  })
+);
+
+export type UserRepoEnvVarsRow = typeof userRepoEnvVars.$inferSelect;
+export type UserRepoEnvVarsInsert = typeof userRepoEnvVars.$inferInsert;

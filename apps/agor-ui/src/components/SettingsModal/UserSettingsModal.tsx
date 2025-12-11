@@ -16,10 +16,12 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 import { DEFAULT_AUDIO_PREFERENCES } from '../../utils/audio';
 import { mergeNotificationPreferences } from '../../utils/notifications';
+import { getStoredAccessToken } from '../../utils/tokenRefresh';
 import { AgenticToolConfigForm } from '../AgenticToolConfigForm';
 import { ApiKeyFields, type ApiKeyStatus } from '../ApiKeyFields';
 import { FormEmojiPickerInput } from '../EmojiPickerInput';
 import { EnvVarEditor } from '../EnvVarEditor';
+import { getDaemonUrl } from '../../config/daemon';
 import { AudioSettingsTab } from './AudioSettingsTab';
 import { NotificationSettingsTab } from './NotificationSettingsTab';
 
@@ -64,6 +66,16 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
   // Environment variable management state
   const [userEnvVars, setUserEnvVars] = useState<Record<string, boolean>>({});
   const [savingEnvVars, setSavingEnvVars] = useState<Record<string, boolean>>({});
+
+  // User-repo environment variables state
+  const [userRepoEnvVars, setUserRepoEnvVars] = useState<Record<string, Record<string, boolean>>>(
+    {}
+  );
+  const [savingUserRepoEnvVars, setSavingUserRepoEnvVars] = useState<Record<string, boolean>>({});
+  const [reposList, setReposList] = useState<
+    Array<{ repo_id: string; slug: string; name: string }>
+  >([]);
+  const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
 
   // Saving state for agentic tool tabs
   const [savingAgenticConfig, setSavingAgenticConfig] = useState<Record<AgenticToolName, boolean>>({
@@ -174,6 +186,67 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     }
   }, [open, user]);
 
+  const getAuthHeaders = useCallback((): HeadersInit => {
+    const headers: HeadersInit = {};
+    const accessToken = getStoredAccessToken();
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
+    }
+    return headers;
+  }, []);
+
+  // Load repos and user-repo env vars when modal opens
+  useEffect(() => {
+    if (!open || !user) return;
+
+    const loadData = async () => {
+      try {
+        const daemonUrl = getDaemonUrl();
+        const headers = getAuthHeaders();
+
+        // Load repos
+        const reposResponse = await fetch(`${daemonUrl}/repos`, {
+          headers,
+          credentials: 'include',
+        });
+        if (!reposResponse.ok) {
+          throw new Error(`Failed to load repos: ${reposResponse.status}`);
+        }
+        const reposData = await reposResponse.json();
+        if (reposData?.data) {
+          setReposList(
+            reposData.data.map((repo: any) => ({
+              repo_id: repo.repo_id,
+              slug: repo.slug,
+              name: repo.name || repo.slug,
+            }))
+          );
+        }
+
+        // Load user-repo env vars
+        const userRepoVarsResponse = await fetch(`${daemonUrl}/user-repo-env-vars`, {
+          headers,
+          credentials: 'include',
+        });
+        if (!userRepoVarsResponse.ok) {
+          throw new Error(`Failed to load user repo env vars: ${userRepoVarsResponse.status}`);
+        }
+        const userRepoVarsData = await userRepoVarsResponse.json();
+        if (userRepoVarsData?.data) {
+          const grouped: Record<string, Record<string, boolean>> = {};
+          userRepoVarsData.data.forEach((item: any) => {
+            grouped[item.repo_id] = item.env_vars;
+          });
+          setUserRepoEnvVars(grouped);
+        }
+      } catch (err) {
+        console.error('Failed to load repo data:', err);
+      }
+    };
+
+    loadData();
+  }, [open, user, getAuthHeaders]);
+
   const handleClose = () => {
     form.resetFields();
     audioForm.resetFields();
@@ -212,7 +285,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         onUpdate?.(user.user_id, updates);
         handleClose();
       })
-      .catch((err) => {
+      .catch(err => {
         console.error('Validation failed:', err);
       });
   };
@@ -249,18 +322,18 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     if (!user) return;
 
     try {
-      setSavingApiKeys((prev) => ({ ...prev, [field]: true }));
+      setSavingApiKeys(prev => ({ ...prev, [field]: true }));
       await onUpdate?.(user.user_id, {
         api_keys: {
           [field]: value,
         },
       });
-      setUserApiKeyStatus((prev) => ({ ...prev, [field]: true }));
+      setUserApiKeyStatus(prev => ({ ...prev, [field]: true }));
     } catch (err) {
       console.error(`Failed to save ${field}:`, err);
       throw err;
     } finally {
-      setSavingApiKeys((prev) => ({ ...prev, [field]: false }));
+      setSavingApiKeys(prev => ({ ...prev, [field]: false }));
     }
   };
 
@@ -269,18 +342,18 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     if (!user) return;
 
     try {
-      setSavingApiKeys((prev) => ({ ...prev, [field]: true }));
+      setSavingApiKeys(prev => ({ ...prev, [field]: true }));
       await onUpdate?.(user.user_id, {
         api_keys: {
           [field]: null,
         },
       });
-      setUserApiKeyStatus((prev) => ({ ...prev, [field]: false }));
+      setUserApiKeyStatus(prev => ({ ...prev, [field]: false }));
     } catch (err) {
       console.error(`Failed to clear ${field}:`, err);
       throw err;
     } finally {
-      setSavingApiKeys((prev) => ({ ...prev, [field]: false }));
+      setSavingApiKeys(prev => ({ ...prev, [field]: false }));
     }
   };
 
@@ -289,16 +362,16 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     if (!user) return;
 
     try {
-      setSavingEnvVars((prev) => ({ ...prev, [key]: true }));
+      setSavingEnvVars(prev => ({ ...prev, [key]: true }));
       await onUpdate?.(user.user_id, {
         env_vars: { [key]: value },
       });
-      setUserEnvVars((prev) => ({ ...prev, [key]: true }));
+      setUserEnvVars(prev => ({ ...prev, [key]: true }));
     } catch (err) {
       console.error(`Failed to save ${key}:`, err);
       throw err;
     } finally {
-      setSavingEnvVars((prev) => ({ ...prev, [key]: false }));
+      setSavingEnvVars(prev => ({ ...prev, [key]: false }));
     }
   };
 
@@ -307,11 +380,11 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     if (!user) return;
 
     try {
-      setSavingEnvVars((prev) => ({ ...prev, [key]: true }));
+      setSavingEnvVars(prev => ({ ...prev, [key]: true }));
       await onUpdate?.(user.user_id, {
         env_vars: { [key]: null },
       });
-      setUserEnvVars((prev) => {
+      setUserEnvVars(prev => {
         const updated = { ...prev };
         delete updated[key];
         return updated;
@@ -320,7 +393,101 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       console.error(`Failed to delete ${key}:`, err);
       throw err;
     } finally {
-      setSavingEnvVars((prev) => ({ ...prev, [key]: false }));
+      setSavingEnvVars(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
+  // Handle user-repo env var save
+  const handleUserRepoEnvVarSave = async (repoId: string, key: string, value: string) => {
+    if (!user) return;
+
+    try {
+      setSavingUserRepoEnvVars(prev => ({ ...prev, [key]: true }));
+
+      const daemonUrl = getDaemonUrl();
+      const response = await fetch(`${daemonUrl}/user-repo-env-vars`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          user_id: user.user_id,
+          repo_id: repoId,
+          env_vars: { [key]: value },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save env var');
+      }
+
+      const result = await response.json();
+      if (result?.env_vars) {
+        setUserRepoEnvVars(prev => ({
+          ...prev,
+          [repoId]: { ...(prev[repoId] || {}), [key]: true },
+        }));
+      }
+    } catch (err) {
+      console.error(`Failed to save ${key}:`, err);
+      throw err;
+    } finally {
+      setSavingUserRepoEnvVars(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
+  // Handle user-repo env var delete
+  const handleUserRepoEnvVarDelete = async (repoId: string, key: string) => {
+    if (!user) return;
+
+    try {
+      setSavingUserRepoEnvVars(prev => ({ ...prev, [key]: true }));
+
+      const daemonUrl = getDaemonUrl();
+
+      // First get the record ID
+      const listResponse = await fetch(
+        `${daemonUrl}/user-repo-env-vars?user_id=${user.user_id}&repo_id=${repoId}`,
+        {
+          headers: getAuthHeaders(),
+          credentials: 'include',
+        }
+      );
+      const listData = await listResponse.json();
+      const record = listData?.data?.[0];
+
+      if (record?.id) {
+        const response = await fetch(`${daemonUrl}/user-repo-env-vars/${record.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders(),
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            env_vars: { [key]: null },
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to delete env var');
+        }
+
+        setUserRepoEnvVars(prev => {
+          const updated = { ...prev };
+          if (updated[repoId]) {
+            delete updated[repoId][key];
+          }
+          return updated;
+        });
+      }
+    } catch (err) {
+      console.error(`Failed to delete ${key}:`, err);
+      throw err;
+    } finally {
+      setSavingUserRepoEnvVars(prev => ({ ...prev, [key]: false }));
     }
   };
 
@@ -338,7 +505,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     const currentForm = formMap[tool];
 
     try {
-      setSavingAgenticConfig((prev) => ({ ...prev, [tool]: true }));
+      setSavingAgenticConfig(prev => ({ ...prev, [tool]: true }));
 
       const values = currentForm.getFieldsValue();
 
@@ -365,7 +532,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       console.error(`Failed to save ${tool} config:`, err);
       throw err;
     } finally {
-      setSavingAgenticConfig((prev) => ({ ...prev, [tool]: false }));
+      setSavingAgenticConfig(prev => ({ ...prev, [tool]: false }));
     }
   };
 
@@ -457,6 +624,8 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         break;
       case 'api-keys':
       case 'env-vars':
+      case 'repo-env-vars':
+      case 'ssh':
         // These tabs save individually, just close
         handleClose();
         break;
@@ -687,6 +856,40 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
                   onDelete={handleEnvVarDelete}
                   loading={savingEnvVars}
                 />
+              </div>
+            ),
+          },
+          {
+            key: 'repo-env-vars',
+            label: 'Repo Env',
+            children: (
+              <div style={{ paddingTop: 8 }}>
+                <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+                  设置您对特定仓库的环境变量。这些变量会覆盖您的全局环境变量，但会被工作树的变量覆盖。
+                </Typography.Paragraph>
+                <div style={{ marginBottom: 16 }}>
+                  <Select
+                    placeholder="选择仓库"
+                    style={{ width: '100%', maxWidth: 400 }}
+                    value={selectedRepoId}
+                    onChange={setSelectedRepoId}
+                    options={reposList.map(repo => ({
+                      value: repo.repo_id,
+                      label: `${repo.name} (${repo.slug})`,
+                    }))}
+                  />
+                </div>
+                {selectedRepoId && (
+                  <EnvVarEditor
+                    envVars={userRepoEnvVars[selectedRepoId] || {}}
+                    onSave={(key, value) => handleUserRepoEnvVarSave(selectedRepoId, key, value)}
+                    onDelete={key => handleUserRepoEnvVarDelete(selectedRepoId, key)}
+                    loading={savingUserRepoEnvVars}
+                  />
+                )}
+                {!selectedRepoId && (
+                  <Typography.Text type="secondary">请选择一个仓库来编辑其环境变量</Typography.Text>
+                )}
               </div>
             ),
           },

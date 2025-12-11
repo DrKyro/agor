@@ -153,6 +153,7 @@ import { createTasksService } from './services/tasks';
 import { TerminalsService } from './services/terminals';
 import { createTitleGenerationService } from './services/title-generation';
 import { createUsersService } from './services/users';
+import { createUserRepoEnvVarsService } from './services/user-repo-env-vars';
 import { setupWorktreeOwnersService } from './services/worktree-owners.js';
 import { createWorktreesService } from './services/worktrees';
 import { setupWorktreesDiffService } from './services/worktrees-diff.js';
@@ -1517,6 +1518,17 @@ async function main() {
   // Register users service (for authentication)
   const usersService = createUsersService(db);
   app.use('/users', usersService);
+
+  // Register user-repo env vars service (per-user, per-repo environment variables)
+  const userRepoEnvVarsService = createUserRepoEnvVarsService(db);
+  app.use('/user-repo-env-vars', userRepoEnvVarsService);
+
+  // Configure service hooks for user-repo env vars
+  app.service('user-repo-env-vars').hooks({
+    before: {
+      all: [requireAuth],
+    },
+  });
 
   // Configure service hooks for authentication and authorization
   app.service('messages').hooks({
@@ -4132,6 +4144,23 @@ async function main() {
     },
     {
       create: { role: 'admin', action: 'restart worktree environments' },
+    },
+    requireAuth
+  );
+
+  // POST /worktrees/:id/write-env-file - Write merged env vars to file
+  registerAuthenticatedRoute(
+    app,
+    '/worktrees/:id/write-env-file',
+    {
+      async create(_data: unknown, params: RouteParams) {
+        const id = params.route?.id;
+        if (!id) throw new Error('Worktree ID required');
+        return worktreesService.writeEnvFile(id as import('@agor/core/types').WorktreeID, params);
+      },
+    },
+    {
+      create: { role: 'member', action: 'write worktree env file' },
     },
     requireAuth
   );

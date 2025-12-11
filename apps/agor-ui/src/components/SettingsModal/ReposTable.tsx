@@ -1,9 +1,23 @@
 import type { Repo } from '@agor/core/types';
 import { DeleteOutlined, EditOutlined, FolderOutlined, PlusOutlined } from '@ant-design/icons';
 import type { RadioChangeEvent } from 'antd';
-import { Button, Card, Empty, Form, Input, Modal, Radio, Space, Tag, Typography } from 'antd';
+import {
+  Button,
+  Card,
+  Checkbox,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Radio,
+  Select,
+  Space,
+  Tag,
+  Typography,
+} from 'antd';
 import { useState } from 'react';
 import { mapToArray } from '@/utils/mapHelpers';
+import { EnvVarEditor } from '../EnvVarEditor';
 
 // Using Typography.Text directly to avoid DOM Text interface collision
 
@@ -82,6 +96,8 @@ export const ReposTable: React.FC<ReposTableProps> = ({
   const [repoForm] = Form.useForm();
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [repoToDelete, setRepoToDelete] = useState<Repo | null>(null);
+  const [repoEnvVars, setRepoEnvVars] = useState<Record<string, boolean>>({});
+  const [savingRepoEnvVars, setSavingRepoEnvVars] = useState<Record<string, boolean>>({});
 
   const isEditing = !!editingRepo;
   const isLocalMode = repoMode === 'local';
@@ -127,6 +143,8 @@ export const ReposTable: React.FC<ReposTableProps> = ({
     // Set default values for new repo
     repoForm.setFieldsValue({
       default_branch: 'main',
+      env_file_name: '.env',
+      auto_write_env_file_on_create: true,
     });
     setRepoModalOpen(true);
   };
@@ -137,7 +155,19 @@ export const ReposTable: React.FC<ReposTableProps> = ({
     repoForm.setFieldsValue({
       slug: repo.slug,
       default_branch: repo.default_branch || 'main',
+      env_file_name: (repo as any).env_file_name || '.env',
+      auto_write_env_file_on_create:
+        (repo as any).auto_write_env_file_on_create !== undefined
+          ? (repo as any).auto_write_env_file_on_create
+          : true,
     });
+    // Load repo env vars (key → boolean, values stay encrypted server-side)
+    const existingEnvVars = (repo as any).env_vars;
+    setRepoEnvVars(
+      existingEnvVars
+        ? Object.fromEntries(Object.keys(existingEnvVars).map((key: string) => [key, true]))
+        : {}
+    );
     setRepoModalOpen(true);
   };
 
@@ -147,6 +177,8 @@ export const ReposTable: React.FC<ReposTableProps> = ({
         // Update existing repo
         const updates: Partial<Repo> = {
           slug: values.slug,
+          env_file_name: values.env_file_name,
+          auto_write_env_file_on_create: values.auto_write_env_file_on_create,
         };
         if (values.default_branch) {
           updates.default_branch = values.default_branch;
@@ -167,9 +199,50 @@ export const ReposTable: React.FC<ReposTableProps> = ({
         }
       }
       repoForm.resetFields();
+      setRepoEnvVars({});
       setEditingRepo(null);
       setRepoModalOpen(false);
     });
+  };
+
+  // Handle repo env var save
+  const handleRepoEnvVarSave = async (key: string, value: string) => {
+    if (!editingRepo) return;
+
+    try {
+      setSavingRepoEnvVars((prev) => ({ ...prev, [key]: true }));
+      await onUpdate?.(editingRepo.repo_id, {
+        env_vars: { [key]: value },
+      });
+      setRepoEnvVars((prev) => ({ ...prev, [key]: true }));
+    } catch (err) {
+      console.error(`Failed to save ${key}:`, err);
+      throw err;
+    } finally {
+      setSavingRepoEnvVars((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  // Handle repo env var delete
+  const handleRepoEnvVarDelete = async (key: string) => {
+    if (!editingRepo) return;
+
+    try {
+      setSavingRepoEnvVars((prev) => ({ ...prev, [key]: true }));
+      await onUpdate?.(editingRepo.repo_id, {
+        env_vars: { [key]: null },
+      });
+      setRepoEnvVars((prev) => {
+        const updated = { ...prev };
+        delete updated[key];
+        return updated;
+      });
+    } catch (err) {
+      console.error(`Failed to delete ${key}:`, err);
+      throw err;
+    } finally {
+      setSavingRepoEnvVars((prev) => ({ ...prev, [key]: false }));
+    }
   };
 
   const handleCancelModal = () => {
@@ -330,6 +403,7 @@ export const ReposTable: React.FC<ReposTableProps> = ({
         onOk={handleSaveRepo}
         onCancel={handleCancelModal}
         okText={modalOkText}
+        width={800}
       >
         <Form form={repoForm} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item label="Repository Type">
@@ -405,6 +479,52 @@ export const ReposTable: React.FC<ReposTableProps> = ({
             >
               <Input placeholder="main" />
             </Form.Item>
+          )}
+
+          <Form.Item
+            label="Environment File Name"
+            name="env_file_name"
+            initialValue=".env"
+            extra="Name of the environment file for worktrees (e.g., .env, .env.local, .env.development)"
+          >
+            <Select
+              options={[
+                { value: '.env', label: '.env' },
+                { value: '.env.local', label: '.env.local' },
+                { value: '.env.development', label: '.env.development' },
+                { value: '.env.staging', label: '.env.staging' },
+                { value: '.env.production', label: '.env.production' },
+              ]}
+              placeholder="选择环境文件名"
+            />
+          </Form.Item>
+
+          {isEditing && (
+            <Form.Item
+              label="创建 Worktree 时自动写入环境变量文件"
+              name="auto_write_env_file_on_create"
+              valuePropName="checked"
+              tooltip="在创建新 worktree 后立即生成 .env 文件（使用仓库、用户和 worktree 变量层级合并后的结果）"
+            >
+              <Checkbox>创建后自动写入</Checkbox>
+            </Form.Item>
+          )}
+
+          {isEditing && (
+            <>
+              <Typography.Title level={5} style={{ marginTop: 24 }}>
+                Repository Environment Variables
+              </Typography.Title>
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+                设置该仓库的默认环境变量。这些变量对所有用户可用，但会被用户的全局和特定环境变量覆盖。
+              </Typography.Paragraph>
+              <EnvVarEditor
+                envVars={repoEnvVars}
+                onSave={handleRepoEnvVarSave}
+                onDelete={handleRepoEnvVarDelete}
+                loading={savingRepoEnvVars}
+              />
+            </>
           )}
         </Form>
       </Modal>

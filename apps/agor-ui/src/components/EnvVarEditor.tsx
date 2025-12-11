@@ -1,8 +1,11 @@
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { Button, Input, Space, Table, Tag, Typography } from 'antd';
+import { DeleteOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
+import { Button, Divider, Input, Space, Table, Tag, Typography, Upload } from 'antd';
+import type { RcFile } from 'antd/es/upload';
 import { useState } from 'react';
+import { useThemedMessage } from '@/utils/message';
 
 const { Text } = Typography;
+const { TextArea } = Input;
 
 export interface EnvVarEditorProps {
   /** Current env vars (key → isSet boolean) */
@@ -29,6 +32,118 @@ export const EnvVarEditor: React.FC<EnvVarEditorProps> = ({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [importText, setImportText] = useState('');
+  const [importing, setImporting] = useState(false);
+  const { showSuccess, showError, showWarning } = useThemedMessage();
+
+  type ParsedVar = { key: string; value: string };
+
+  const parseEnvText = (text: string): { entries: ParsedVar[]; skipped: number } => {
+    const lines = text.split(/\r?\n/);
+    const result = new Map<string, string>();
+    let skipped = 0;
+
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+
+      const withoutExport = trimmed.startsWith('export ')
+        ? trimmed.slice('export '.length).trim()
+        : trimmed;
+      const equalsIndex = withoutExport.indexOf('=');
+      if (equalsIndex <= 0) {
+        skipped += 1;
+        return;
+      }
+
+      const key = withoutExport.slice(0, equalsIndex).trim();
+      const rawValue = withoutExport.slice(equalsIndex + 1).trim();
+      if (!key || !rawValue) {
+        skipped += 1;
+        return;
+      }
+
+      const unquotedValue =
+        (rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+        (rawValue.startsWith("'") && rawValue.endsWith("'"))
+          ? rawValue.slice(1, -1)
+          : rawValue;
+
+      result.set(key, unquotedValue.trim());
+    });
+
+    const entries = Array.from(result.entries())
+      .filter(([, value]) => value.length > 0)
+      .map(([key, value]) => ({ key, value }));
+
+    return { entries, skipped };
+  };
+
+  const processImport = async (
+    entries: ParsedVar[],
+    skipped: number,
+    sourceLabel: string
+  ): Promise<boolean> => {
+    if (entries.length === 0) {
+      setError('No valid KEY=VALUE lines found to import');
+      return false;
+    }
+
+    setError(null);
+    setImporting(true);
+    const failedKeys: string[] = [];
+
+    for (const { key, value } of entries) {
+      try {
+        await onSave(key, value);
+      } catch (err) {
+        console.error(`Failed to import ${key} from ${sourceLabel}:`, err);
+        failedKeys.push(key);
+      }
+    }
+
+    setImporting(false);
+
+    const skippedText = skipped > 0 ? `; skipped ${skipped} invalid line(s)` : '';
+
+    if (failedKeys.length === 0) {
+      showSuccess(`Imported ${entries.length} variables from ${sourceLabel}${skippedText}`);
+      return true;
+    }
+
+    const failedList = failedKeys.join(', ');
+    const successCount = entries.length - failedKeys.length;
+    showWarning(
+      `Imported ${successCount}/${entries.length} variables from ${sourceLabel}${skippedText}; failed: ${failedList}`
+    );
+    setError(`Failed to import: ${failedList}`);
+    return false;
+  };
+
+  const handleImportText = async () => {
+    if (!importText.trim()) {
+      setError('Paste env vars (one KEY=VALUE per line) before importing');
+      return;
+    }
+    const { entries, skipped } = parseEnvText(importText);
+    const succeeded = await processImport(entries, skipped, 'pasted text');
+    if (succeeded) {
+      setImportText('');
+    }
+  };
+
+  const handleFileUpload = async (file: RcFile) => {
+    try {
+      const fileText = await file.text();
+      const { entries, skipped } = parseEnvText(fileText);
+      await processImport(entries, skipped, file.name || 'uploaded file');
+    } catch (err) {
+      console.error('Failed to read uploaded env file:', err);
+      showError('Failed to read uploaded env file');
+      setError('Failed to read uploaded env file');
+    }
+    return false;
+  };
 
   const handleAdd = async () => {
     if (!newKey.trim() || !newValue.trim()) return;
@@ -93,17 +208,17 @@ export const EnvVarEditor: React.FC<EnvVarEditorProps> = ({
                 onChange={(e) => setEditingValue(e.target.value)}
                 onPressEnter={() => handleUpdate(record.key)}
                 autoFocus
-                disabled={disabled}
+                disabled={disabled || importing}
               />
               <Button
                 type="primary"
                 onClick={() => handleUpdate(record.key)}
                 loading={loading[record.key]}
-                disabled={disabled || !editingValue.trim()}
+                disabled={disabled || importing || !editingValue.trim()}
               >
                 Save
               </Button>
-              <Button onClick={() => setEditingKey(null)} disabled={disabled}>
+              <Button onClick={() => setEditingKey(null)} disabled={disabled || importing}>
                 Cancel
               </Button>
             </Space.Compact>
@@ -121,7 +236,7 @@ export const EnvVarEditor: React.FC<EnvVarEditorProps> = ({
                   setEditingKey(record.key);
                   setEditingValue('');
                 }}
-                disabled={disabled}
+                disabled={disabled || importing}
               >
                 Update
               </Button>
@@ -140,7 +255,7 @@ export const EnvVarEditor: React.FC<EnvVarEditorProps> = ({
           icon={<DeleteOutlined />}
           onClick={() => handleDeleteClick(record.key)}
           loading={loading[record.key]}
-          disabled={disabled}
+          disabled={disabled || importing}
         >
           Delete
         </Button>
@@ -189,7 +304,7 @@ export const EnvVarEditor: React.FC<EnvVarEditorProps> = ({
             onChange={(e) => setNewKey(e.target.value)}
             onPressEnter={handleAdd}
             style={{ width: '30%' }}
-            disabled={disabled}
+            disabled={disabled || importing}
           />
           <Input.Password
             placeholder="Value"
@@ -197,17 +312,54 @@ export const EnvVarEditor: React.FC<EnvVarEditorProps> = ({
             onChange={(e) => setNewValue(e.target.value)}
             onPressEnter={handleAdd}
             style={{ flex: 1 }}
-            disabled={disabled}
+            disabled={disabled || importing}
           />
           <Button
             type="primary"
             icon={<PlusOutlined />}
             onClick={handleAdd}
-            disabled={disabled || !newKey.trim() || !newValue.trim()}
+            disabled={disabled || importing || !newKey.trim() || !newValue.trim()}
           >
             Add
           </Button>
         </Space.Compact>
+      </Space>
+
+      <Divider style={{ margin: '8px 0' }} />
+
+      <Space direction="vertical" size="small" style={{ width: '100%' }}>
+        <Text strong>Import from .env or text</Text>
+        <Text type="secondary">
+          Upload a .env file or paste KEY=VALUE lines (one per line) to import multiple variables.
+          Existing keys will be overwritten.
+        </Text>
+        <Space wrap>
+          <Upload
+            accept=".env,text/plain"
+            showUploadList={false}
+            beforeUpload={handleFileUpload}
+            disabled={disabled || importing}
+          >
+            <Button icon={<UploadOutlined />} disabled={disabled || importing}>
+              Upload .env
+            </Button>
+          </Upload>
+          <Button
+            type="primary"
+            onClick={handleImportText}
+            disabled={disabled || importing || !importText.trim()}
+          >
+            Import from text
+          </Button>
+        </Space>
+        <TextArea
+          placeholder={'API_KEY=123\nDATABASE_URL=postgres://user:pass@localhost:5432/db'}
+          rows={4}
+          value={importText}
+          onChange={(e) => setImportText(e.target.value)}
+          disabled={disabled || importing}
+          style={{ fontFamily: 'monospace' }}
+        />
       </Space>
     </Space>
   );
