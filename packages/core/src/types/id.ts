@@ -131,6 +131,16 @@ export type UserID = UUID;
 export type WorktreeID = UUID;
 
 /**
+ * Repo identifier
+ *
+ * Uniquely identifies a git repository.
+ *
+ * @example
+ * const repoId: RepoID = "0193k1l2-3m4n-7o5p-a8f3-9d2e1c4b5a6f";
+ */
+export type RepoID = UUID;
+
+/**
  * Comment identifier
  *
  * Uniquely identifies a board comment (human-to-human conversation).

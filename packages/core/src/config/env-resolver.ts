@@ -2,8 +2,9 @@ import { eq } from 'drizzle-orm';
 import type { Database } from '../db/client';
 import { select } from '../db/database-wrapper';
 import { decryptApiKey } from '../db/encryption';
-import { users, worktrees } from '../db/schema';
-import type { UserID, WorktreeID } from '../types';
+import { UserRepoEnvVarsRepository } from '../db/repositories/user-repo-env-vars';
+import { repos, users, worktrees } from '../db/schema';
+import type { RepoID, UserID, WorktreeID } from '../types';
 
 /**
  * Environment variables used internally by Agor daemon that should NOT be passed
@@ -200,4 +201,245 @@ export async function createUserProcessEnvironment(
   }
 
   return env;
+}
+
+/**
+ * Resolve repo-level environment variables (decrypted from database)
+ *
+ * These are default env vars set by the repo maintainer, available to all users.
+ * Lowest priority after system env vars.
+ */
+export async function resolveRepoEnvironment(
+  repoId: RepoID,
+  db: Database
+): Promise<Record<string, string>> {
+  const env: Record<string, string> = {};
+
+  try {
+    const row = await select(db).from(repos).where(eq(repos.repo_id, repoId)).one();
+
+    if (row?.data && typeof row.data === 'object') {
+      const data = row.data as {
+        env_vars?: Record<string, string>;
+      };
+
+      const encryptedVars = data.env_vars;
+      if (encryptedVars) {
+        for (const [key, encryptedValue] of Object.entries(encryptedVars)) {
+          try {
+            const decryptedValue = decryptApiKey(encryptedValue);
+            if (decryptedValue && decryptedValue.trim() !== '') {
+              env[key] = decryptedValue;
+            }
+          } catch (err) {
+            console.error(`Failed to decrypt repo env var ${key} for ${repoId}:`, err);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`Failed to resolve environment for repo ${repoId}:`, err);
+  }
+
+  return env;
+}
+
+/**
+ * Resolve user-repo environment variables (decrypted from database)
+ *
+ * These are per-user, per-repo env vars that override user global env vars.
+ */
+export async function resolveUserRepoEnvironment(
+  userId: UserID,
+  repoId: RepoID,
+  db: Database
+): Promise<Record<string, string>> {
+  try {
+    const repository = new UserRepoEnvVarsRepository(db);
+    return await repository.getDecryptedEnvVars(userId, repoId);
+  } catch (err) {
+    console.error(`Failed to resolve user-repo environment for user ${userId}, repo ${repoId}:`, err);
+    return {};
+  }
+}
+
+/**
+ * Get the repo ID for a worktree
+ */
+export async function getRepoIdForWorktree(
+  worktreeId: WorktreeID,
+  db: Database
+): Promise<RepoID | null> {
+  try {
+    const row = await select(db).from(worktrees).where(eq(worktrees.worktree_id, worktreeId)).one();
+    return row?.repo_id as RepoID | null;
+  } catch (err) {
+    console.error(`Failed to get repo ID for worktree ${worktreeId}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Create a complete worktree process environment with full hierarchy resolution
+ *
+ * This function builds the environment using the complete priority hierarchy:
+ * 1. System environment (process.env) - lowest priority
+ * 2. Repo default env vars (repo.data.env_vars)
+ * 3. User global env vars (user.data.env_vars + api_keys)
+ * 4. User-repo env vars (user_repo_env_vars table)
+ * 5. Worktree env vars (worktree.data.env_vars)
+ * 6. Additional env vars parameter - highest priority
+ *
+ * Filters out Agor-internal variables that shouldn't be passed to user processes.
+ *
+ * @param userId - User ID to resolve environment for (optional)
+ * @param db - Database instance (required if userId provided)
+ * @param worktreeId - Worktree ID to resolve environment for (optional)
+ * @param additionalEnv - Additional env vars to merge (optional, highest priority)
+ * @returns Complete environment object ready for child process spawning
+ *
+ * @example
+ * // For worktree environment startup with full hierarchy
+ * const env = await createWorktreeProcessEnvironment(worktree.created_by, db, worktree.worktree_id);
+ * spawn(command, { cwd, shell: true, env });
+ */
+export async function createWorktreeProcessEnvironment(
+  userId?: UserID,
+  db?: Database,
+  worktreeId?: WorktreeID,
+  additionalEnv?: Record<string, string>
+): Promise<Record<string, string>> {
+  // Start with system environment
+  const env: Record<string, string> = { ...process.env } as Record<string, string>;
+
+  // Filter out Agor-internal variables
+  for (const internalVar of AGOR_INTERNAL_ENV_VARS) {
+    delete env[internalVar];
+  }
+
+  // If we have a worktree, resolve the full hierarchy
+  if (worktreeId && db) {
+    // Get repo ID for the worktree
+    const repoId = await getRepoIdForWorktree(worktreeId, db);
+
+    if (repoId) {
+      // 1. Repo default env vars (lowest priority after system)
+      const repoEnv = await resolveRepoEnvironment(repoId, db);
+      for (const [key, value] of Object.entries(repoEnv)) {
+        if (value && value.trim() !== '') {
+          env[key] = value;
+        }
+      }
+
+      // 2. User global env vars
+      if (userId) {
+        const userEnv = await resolveUserEnvironment(userId, db);
+        for (const [key, value] of Object.entries(userEnv)) {
+          if (value && value.trim() !== '') {
+            env[key] = value;
+          }
+        }
+
+        // 3. User-repo env vars
+        const userRepoEnv = await resolveUserRepoEnvironment(userId, repoId, db);
+        for (const [key, value] of Object.entries(userRepoEnv)) {
+          if (value && value.trim() !== '') {
+            env[key] = value;
+          }
+        }
+      }
+    } else if (userId && db) {
+      // No repo context, just use user global env vars
+      const userEnv = await resolveUserEnvironment(userId, db);
+      for (const [key, value] of Object.entries(userEnv)) {
+        if (value && value.trim() !== '') {
+          env[key] = value;
+        }
+      }
+    }
+
+    // 4. Worktree env vars (high priority)
+    const worktreeEnv = await resolveWorktreeEnvironment(worktreeId, db);
+    for (const [key, value] of Object.entries(worktreeEnv)) {
+      if (value && value.trim() !== '') {
+        env[key] = value;
+      }
+    }
+  } else if (userId && db) {
+    // No worktree context, just use user global env vars
+    const userEnv = await resolveUserEnvironment(userId, db);
+    for (const [key, value] of Object.entries(userEnv)) {
+      if (value && value.trim() !== '') {
+        env[key] = value;
+      }
+    }
+  }
+
+  // 5. Additional environment variables (highest priority)
+  if (additionalEnv) {
+    for (const [key, value] of Object.entries(additionalEnv)) {
+      if (value && value.trim() !== '') {
+        env[key] = value;
+      }
+    }
+  }
+
+  return env;
+}
+
+/**
+ * Get environment variables by layer for display purposes
+ *
+ * Returns a breakdown of where each env var comes from, useful for
+ * UI display and debugging.
+ */
+export async function getEnvironmentByLayer(
+  userId: UserID | undefined,
+  repoId: RepoID | undefined,
+  worktreeId: WorktreeID | undefined,
+  db: Database
+): Promise<{
+  repo: Record<string, string>;
+  userGlobal: Record<string, string>;
+  userRepo: Record<string, string>;
+  worktree: Record<string, string>;
+  merged: Record<string, string>;
+}> {
+  const result = {
+    repo: {} as Record<string, string>,
+    userGlobal: {} as Record<string, string>,
+    userRepo: {} as Record<string, string>,
+    worktree: {} as Record<string, string>,
+    merged: {} as Record<string, string>,
+  };
+
+  // Repo env vars
+  if (repoId) {
+    result.repo = await resolveRepoEnvironment(repoId, db);
+  }
+
+  // User global env vars
+  if (userId) {
+    result.userGlobal = await resolveUserEnvironment(userId, db);
+  }
+
+  // User-repo env vars
+  if (userId && repoId) {
+    result.userRepo = await resolveUserRepoEnvironment(userId, repoId, db);
+  }
+
+  // Worktree env vars
+  if (worktreeId) {
+    result.worktree = await resolveWorktreeEnvironment(worktreeId, db);
+  }
+
+  // Merged (in priority order)
+  result.merged = {
+    ...result.repo,
+    ...result.userGlobal,
+    ...result.userRepo,
+    ...result.worktree,
+  };
+
+  return result;
 }

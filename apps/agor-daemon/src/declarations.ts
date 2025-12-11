@@ -218,6 +218,10 @@ export interface WorktreesServiceImpl extends Service<Worktree, Partial<Worktree
     params?: FeathersParams
   ): Promise<import('@agor/core/types').CodeServerOpenResult>;
   installDependencies(id: WorktreeID, params?: FeathersParams): Promise<Worktree>;
+  writeEnvFile(
+    id: WorktreeID,
+    params?: FeathersParams
+  ): Promise<import('@agor/core/config').WriteEnvFileResult | null>;
   getLogs(
     id: WorktreeID,
     params?: FeathersParams

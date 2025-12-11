@@ -8,6 +8,7 @@ export * from './agor-yml';
 export * from './config-manager';
 export * from './constants';
 export * from './env-blocklist';
+export * from './env-file-writer';
 export * from './env-locking';
 export * from './env-resolver';
 export * from './env-validation';

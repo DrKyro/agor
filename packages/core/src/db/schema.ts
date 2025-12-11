@@ -32,6 +32,7 @@ export const mcpServers = schema.mcpServers;
 export const boardObjects = schema.boardObjects;
 export const sessionMcpServers = schema.sessionMcpServers;
 export const boardComments = schema.boardComments;
+export const userRepoEnvVars = schema.userRepoEnvVars;
 
 // Re-export all types
 export type * from './schema.sqlite';

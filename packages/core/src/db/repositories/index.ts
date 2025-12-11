@@ -12,5 +12,6 @@ export * from './repos';
 export * from './session-mcp-servers';
 export * from './sessions';
 export * from './tasks';
+export * from './user-repo-env-vars';
 export * from './users';
 export * from './worktrees';

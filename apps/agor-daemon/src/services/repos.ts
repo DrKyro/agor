@@ -17,6 +17,7 @@ import {
   resolveUserEnvironment,
   resolveWorktreeEnvironment,
   writeAgorYml,
+  writeWorktreeEnvFile,
 } from '@agor/core/config';
 import { type Database, RepoRepository, WorktreeRepository } from '@agor/core/db';
 import { autoAssignWorktreeUniqueId } from '@agor/core/environment/variable-resolver';
@@ -330,6 +331,8 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
     let health_check_url: string | undefined;
     let app_url: string | undefined;
     let logs_command: string | undefined;
+    const autoWriteEnvFile =
+      (repo as { auto_write_env_file_on_create?: boolean }).auto_write_env_file_on_create ?? true;
 
     if (repo.environment_config) {
       const templateContext = {
@@ -413,6 +416,23 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
       const worktreeRepo = new WorktreeRepository(this.db);
       await worktreeRepo.addOwner(worktree.worktree_id, userId);
       console.log(`✓ Added user ${userId.substring(0, 8)} as owner of worktree ${worktree.name}`);
+    }
+
+    // Auto-write env file after creation (best-effort, doesn't block worktree creation)
+    if (autoWriteEnvFile) {
+      try {
+        console.log(
+          `🛠️  Auto-writing env file for worktree ${worktree.name} (repo ${repo.slug}) with file:`,
+          (repo as { env_file_name?: string }).env_file_name || '.env'
+        );
+        await writeWorktreeEnvFile(worktree.worktree_id, userId, this.db);
+        console.log(`📝 Auto-wrote env file for worktree ${worktree.name}`);
+      } catch (error) {
+        console.warn(
+          `⚠️  Auto-write env file failed for ${worktree.name}:`,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
     }
 
     if (data.boardId) {

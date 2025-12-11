@@ -15,10 +15,15 @@ import {
   type AgorIDETunnelSettings,
   type AgorIDEVSCodeSettings,
   createUserProcessEnvironment,
+  createWorktreeProcessEnvironment,
   ENVIRONMENT,
   formatValidationErrors,
+  getEnvironmentByLayer,
+  readWorktreeEnvFile,
   resolveWorktreeEnvironment,
   validateEnvVar,
+  writeWorktreeEnvFile,
+  type WriteEnvFileResult,
 } from '@agor/core/config';
 import { type Database, encryptApiKey, WorktreeRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
@@ -1618,6 +1623,108 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
         `Failed to get diff: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+  }
+
+  /**
+   * Write environment variables to a file in the worktree directory
+   *
+   * Resolves the full env var hierarchy (repo → user global → user-repo → worktree)
+   * and writes to the configured env file (from repo's env_file_name).
+   *
+   * @param id - Worktree ID
+   * @param params - Request params (contains user context)
+   * @returns Result with file path and variable count, or null if no env_file_name configured
+   */
+  async writeEnvFile(
+    id: WorktreeID,
+    params?: WorktreeParams
+  ): Promise<WriteEnvFileResult | null> {
+    const userId = (params as { user?: User })?.user?.user_id as UserID | undefined;
+
+    try {
+      const result = await writeWorktreeEnvFile(id, userId, this.db);
+
+      if (result) {
+        console.log(
+          `📝 Wrote ${result.variableCount} env vars to ${result.filePath} for worktree ${id}`
+        );
+      }
+
+      return result;
+    } catch (error) {
+      console.error(
+        `❌ Failed to write env file for worktree ${id}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Read the current env file content from a worktree
+   *
+   * @param id - Worktree ID
+   * @param params - Request params
+   * @returns File content or null if file doesn't exist or no env_file_name configured
+   */
+  async readEnvFile(
+    id: WorktreeID,
+    _params?: WorktreeParams
+  ): Promise<{ fileName: string; filePath: string; content: string } | null> {
+    try {
+      return await readWorktreeEnvFile(id, this.db);
+    } catch (error) {
+      console.error(
+        `❌ Failed to read env file for worktree ${id}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get environment variables by layer for display purposes
+   *
+   * Returns a breakdown of where each env var comes from, useful for
+   * UI display and debugging.
+   *
+   * @param id - Worktree ID
+   * @param params - Request params (contains user context)
+   * @returns Environment variables grouped by layer
+   */
+  async getEnvLayers(
+    id: WorktreeID,
+    params?: WorktreeParams
+  ): Promise<{
+    repo: Record<string, string>;
+    userGlobal: Record<string, string>;
+    userRepo: Record<string, string>;
+    worktree: Record<string, string>;
+    merged: Record<string, string>;
+  }> {
+    const userId = (params as { user?: User })?.user?.user_id as UserID | undefined;
+    const worktree = await this.get(id, params);
+
+    return getEnvironmentByLayer(userId, worktree.repo_id, id, this.db);
+  }
+
+  /**
+   * Get the full resolved environment for a worktree
+   *
+   * Uses the new createWorktreeProcessEnvironment function with full hierarchy.
+   *
+   * @param id - Worktree ID
+   * @param params - Request params (contains user context)
+   * @returns Full resolved environment variables
+   */
+  async getResolvedEnv(
+    id: WorktreeID,
+    params?: WorktreeParams
+  ): Promise<Record<string, string>> {
+    const userId = (params as { user?: User })?.user?.user_id as UserID | undefined;
+
+    // Use the new full hierarchy resolver
+    return createWorktreeProcessEnvironment(userId, this.db, id);
   }
 }
 
