@@ -157,6 +157,7 @@ import { createUserRepoEnvVarsService } from './services/user-repo-env-vars';
 import { setupWorktreeOwnersService } from './services/worktree-owners.js';
 import { createWorktreesService } from './services/worktrees';
 import { setupWorktreesDiffService } from './services/worktrees-diff.js';
+import { setupWorktreesGitActionsService } from './services/worktrees-git-actions.js';
 import { AnonymousStrategy } from './strategies/anonymous';
 import {
   ensureMinimumRole,
@@ -1096,6 +1097,13 @@ async function main() {
   if (!app.services['worktrees/:id/diff']) {
     const worktreeRepo = new WorktreeRepository(db);
     setupWorktreesDiffService(app, worktreeRepo);
+  }
+
+  // Register worktrees-git-actions nested route services for git operations
+  // (rebase, merge, rename-branch, create-pr, push, branches)
+  if (!app.services['worktrees/:id/git/rebase']) {
+    const worktreeRepo = new WorktreeRepository(db);
+    setupWorktreesGitActionsService(app, worktreeRepo);
   }
 
   // Initialize Unix integration service for worktree isolation
