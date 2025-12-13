@@ -155,14 +155,15 @@ export const ReposTable: React.FC<ReposTableProps> = ({
     repoForm.setFieldsValue({
       slug: repo.slug,
       default_branch: repo.default_branch || 'main',
-      env_file_name: (repo as any).env_file_name || '.env',
+      env_file_name: (repo as { env_file_name?: string }).env_file_name || '.env',
       auto_write_env_file_on_create:
-        (repo as any).auto_write_env_file_on_create !== undefined
-          ? (repo as any).auto_write_env_file_on_create
+        (repo as { auto_write_env_file_on_create?: boolean }).auto_write_env_file_on_create !==
+        undefined
+          ? (repo as { auto_write_env_file_on_create?: boolean }).auto_write_env_file_on_create
           : true,
     });
     // Load repo env vars (key → boolean, values stay encrypted server-side)
-    const existingEnvVars = (repo as any).env_vars;
+    const existingEnvVars = (repo as { env_vars?: Record<string, string> }).env_vars;
     setRepoEnvVars(
       existingEnvVars
         ? Object.fromEntries(Object.keys(existingEnvVars).map((key: string) => [key, true]))
@@ -230,7 +231,7 @@ export const ReposTable: React.FC<ReposTableProps> = ({
     try {
       setSavingRepoEnvVars((prev) => ({ ...prev, [key]: true }));
       await onUpdate?.(editingRepo.repo_id, {
-        env_vars: { [key]: null },
+        env_vars: { [key]: null } as unknown as Record<string, string>,
       });
       setRepoEnvVars((prev) => {
         const updated = { ...prev };

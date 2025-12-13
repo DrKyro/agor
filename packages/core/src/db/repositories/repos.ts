@@ -6,12 +6,12 @@
 
 import type { Repo, UUID } from '@agor/core/types';
 import { eq, like, sql } from 'drizzle-orm';
-import { formatShortId, generateId } from '../../lib/ids';
 import { getEnvVarBlockReason, isEnvVarAllowed, validateEnvVar } from '../../config';
+import { formatShortId, generateId } from '../../lib/ids';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
-import { type RepoInsert, type RepoRow, repos } from '../schema';
 import { encryptApiKey } from '../encryption';
+import { type RepoInsert, type RepoRow, repos } from '../schema';
 import {
   AmbiguousIdError,
   type BaseRepository,
@@ -287,7 +287,8 @@ export class RepoRepository implements BaseRepository<Repo, Partial<Repo>> {
 
         const current = this.rowToRepo(currentRow);
         const currentEncryptedEnvVars =
-          (currentRow.data && (currentRow.data as { env_vars?: Record<string, string> }).env_vars) ||
+          (currentRow.data &&
+            (currentRow.data as { env_vars?: Record<string, string> }).env_vars) ||
           {};
 
         // Extract env var updates (support both top-level and nested data.env_vars)
@@ -314,7 +315,7 @@ export class RepoRepository implements BaseRepository<Repo, Partial<Repo>> {
         const merged = deepMerge(current, updatesWithoutEnvVars);
 
         // Apply env var updates with encryption
-        let nextEncryptedEnvVars = { ...currentEncryptedEnvVars };
+        const nextEncryptedEnvVars = { ...currentEncryptedEnvVars };
         if (incomingEnvVars) {
           for (const [key, value] of Object.entries(incomingEnvVars)) {
             if (!isEnvVarAllowed(key)) {

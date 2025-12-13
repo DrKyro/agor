@@ -5,13 +5,13 @@
  * Stores encrypted environment variables that users can set for specific repositories.
  */
 
-import type { RepoID, UserID, UUID } from '../../types';
 import { and, eq } from 'drizzle-orm';
 import { generateId } from '../../lib/ids';
+import type { RepoID, UserID, UUID } from '../../types';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
 import { decryptApiKey, encryptApiKey } from '../encryption';
-import { repos, userRepoEnvVars, users, type UserRepoEnvVarsRow } from '../schema';
+import { repos, type UserRepoEnvVarsRow, userRepoEnvVars, users } from '../schema';
 import { EntityNotFoundError, RepositoryError } from './base';
 
 /**

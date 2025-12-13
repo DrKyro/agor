@@ -22,8 +22,8 @@ import {
   readWorktreeEnvFile,
   resolveWorktreeEnvironment,
   validateEnvVar,
-  writeWorktreeEnvFile,
   type WriteEnvFileResult,
+  writeWorktreeEnvFile,
 } from '@agor/core/config';
 import { type Database, encryptApiKey, WorktreeRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
@@ -1635,10 +1635,7 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
    * @param params - Request params (contains user context)
    * @returns Result with file path and variable count, or null if no env_file_name configured
    */
-  async writeEnvFile(
-    id: WorktreeID,
-    params?: WorktreeParams
-  ): Promise<WriteEnvFileResult | null> {
+  async writeEnvFile(id: WorktreeID, params?: WorktreeParams): Promise<WriteEnvFileResult | null> {
     const userId = (params as { user?: User })?.user?.user_id as UserID | undefined;
 
     try {
@@ -1717,10 +1714,7 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
    * @param params - Request params (contains user context)
    * @returns Full resolved environment variables
    */
-  async getResolvedEnv(
-    id: WorktreeID,
-    params?: WorktreeParams
-  ): Promise<Record<string, string>> {
+  async getResolvedEnv(id: WorktreeID, params?: WorktreeParams): Promise<Record<string, string>> {
     const userId = (params as { user?: User })?.user?.user_id as UserID | undefined;
 
     // Use the new full hierarchy resolver

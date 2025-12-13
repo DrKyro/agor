@@ -258,7 +258,10 @@ export async function resolveUserRepoEnvironment(
     const repository = new UserRepoEnvVarsRepository(db);
     return await repository.getDecryptedEnvVars(userId, repoId);
   } catch (err) {
-    console.error(`Failed to resolve user-repo environment for user ${userId}, repo ${repoId}:`, err);
+    console.error(
+      `Failed to resolve user-repo environment for user ${userId}, repo ${repoId}:`,
+      err
+    );
     return {};
   }
 }

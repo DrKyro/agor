@@ -31,12 +31,13 @@ export const RebaseModal: React.FC<RebaseModalProps> = ({
       client
         .service('worktrees/:id/git/branches')
         .find({ route: { id: worktree.worktree_id } })
-        .then((result: { remote: string[]; current?: string }) => {
-          setBranches(result.remote);
+        .then((result: unknown) => {
+          const data = result as { remote: string[]; current?: string };
+          setBranches(data.remote);
           // Default to base_ref or main
           const defaultBranch = worktree.base_ref || 'main';
           setSelectedBranch(
-            result.remote.includes(defaultBranch) ? defaultBranch : result.remote[0] || ''
+            data.remote.includes(defaultBranch) ? defaultBranch : data.remote[0] || ''
           );
         })
         .catch(console.error)

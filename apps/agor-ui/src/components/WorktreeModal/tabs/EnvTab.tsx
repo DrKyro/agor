@@ -1,19 +1,8 @@
 import type { AgorClient } from '@agor/core/api';
 import type { Repo, Worktree } from '@agor/core/types';
-import {
-  Button,
-  Card,
-  Col,
-  Divider,
-  Input,
-  Row,
-  Space,
-  Tag,
-  Typography,
-  theme,
-} from 'antd';
+import { DeleteOutlined, EditOutlined, FileTextOutlined, SaveOutlined } from '@ant-design/icons';
+import { Button, Card, Divider, Input, Space, Tag, Typography, theme } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { SaveOutlined, EditOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useThemedMessage } from '@/utils/message';
 
 const { Paragraph, Text } = Typography;
@@ -106,7 +95,7 @@ export const EnvTab: React.FC<EnvTabProps> = ({ worktree, repo, client, onUpdate
           query: { repo_id: repo.repo_id },
         });
         const list = Array.isArray(result) ? result : result?.data;
-        const envMap = list?.[0]?.env_vars as Record<string, boolean> | undefined;
+        const envMap = (list?.[0] as { env_vars?: Record<string, boolean> })?.env_vars;
         setUserRepoEnvKeys(envMap ? Object.keys(envMap) : []);
       } catch (error) {
         console.error('Failed to load user-repo env vars for Env tab:', error);
@@ -246,7 +235,8 @@ export const EnvTab: React.FC<EnvTabProps> = ({ worktree, repo, client, onUpdate
             </div>
             <Divider style={{ margin: '8px 0' }} />
             <Text type="secondary" style={{ fontSize: 12 }}>
-              优先级：系统 &lt; 仓库默认 &lt; 用户全局 &lt; 用户-仓库 &lt; 工作树 .env。可点击下方写入按钮生成
+              优先级：系统 &lt; 仓库默认 &lt; 用户全局 &lt; 用户-仓库 &lt; 工作树
+              .env。可点击下方写入按钮生成
               {repoEnvFileName} 文件。
             </Text>
           </Space>
@@ -270,14 +260,17 @@ export const EnvTab: React.FC<EnvTabProps> = ({ worktree, repo, client, onUpdate
           }
         >
           <Text type="secondary" style={{ fontSize: 12 }}>
-            仅作用于当前工作树，优先级高于用户级/仓库级变量。直接粘贴 .env 内容，一行一个 KEY=VALUE。
+            仅作用于当前工作树，优先级高于用户级/仓库级变量。直接粘贴 .env 内容，一行一个
+            KEY=VALUE。
           </Text>
 
           {isEditingWorktreeEnv ? (
             <Space direction="vertical" size="small" style={{ width: '100%', marginTop: 8 }}>
               <TextArea
                 value={worktreeEnvText}
-                onChange={(e) => setWorktreeEnvText(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                  setWorktreeEnvText(e.target.value)
+                }
                 placeholder={
                   'DATABASE_URL=postgres://user:pass@localhost:5432/app\nREDIS_URL=redis://localhost:6379'
                 }

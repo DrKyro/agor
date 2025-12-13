@@ -193,7 +193,6 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     if (!isEditingContext && worktreeChanged) {
       setCustomContextJson(JSON.stringify(worktree.custom_context || {}, null, 2));
     }
-
   }, [worktree, isEditingUrls, isEditingContext]);
 
   // Environment control handlers
@@ -1375,7 +1374,6 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                 </Descriptions>
               )}
             </div>
-
           </Space>
         </Card>
       </Space>

@@ -39,8 +39,9 @@ export const CreatePRModal: React.FC<CreatePRModalProps> = ({
       client
         .service('worktrees/:id/git/branches')
         .find({ route: { id: worktree.worktree_id } })
-        .then((result: { remote: string[] }) => {
-          setBranches(result.remote);
+        .then((result: unknown) => {
+          const data = result as { remote: string[] };
+          setBranches(data.remote);
         })
         .catch(console.error)
         .finally(() => setLoadingBranches(false));

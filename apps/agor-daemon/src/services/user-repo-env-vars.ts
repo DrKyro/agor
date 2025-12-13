@@ -8,17 +8,17 @@
 import { generateId } from '@agor/core';
 import { getEnvVarBlockReason, isEnvVarAllowed, validateEnvVar } from '@agor/core/config';
 import {
+  and,
   type Database,
   decryptApiKey,
+  deleteFrom,
   encryptApiKey,
   eq,
-  and,
-  select,
   insert,
-  update,
-  deleteFrom,
-  userRepoEnvVars,
   repos,
+  select,
+  update,
+  userRepoEnvVars,
   users,
 } from '@agor/core/db';
 import type { Paginated, Params, RepoID, UserID, UUID } from '@agor/core/types';
@@ -85,10 +85,7 @@ export class UserRepoEnvVarsService {
    * Get user-repo env vars by ID
    */
   async get(id: UUID, _params?: Params): Promise<UserRepoEnvVarsResponse> {
-    const row = await select(this.db)
-      .from(userRepoEnvVars)
-      .where(eq(userRepoEnvVars.id, id))
-      .one();
+    const row = await select(this.db).from(userRepoEnvVars).where(eq(userRepoEnvVars.id, id)).one();
 
     if (!row) {
       throw new Error(`User-repo env vars not found: ${id}`);
@@ -100,10 +97,7 @@ export class UserRepoEnvVarsService {
   /**
    * Get user-repo env vars by user and repo
    */
-  async getByUserAndRepo(
-    userId: UserID,
-    repoId: RepoID
-  ): Promise<UserRepoEnvVarsResponse | null> {
+  async getByUserAndRepo(userId: UserID, repoId: RepoID): Promise<UserRepoEnvVarsResponse | null> {
     const row = await select(this.db)
       .from(userRepoEnvVars)
       .where(and(eq(userRepoEnvVars.user_id, userId), eq(userRepoEnvVars.repo_id, repoId)))

@@ -113,6 +113,11 @@ export interface Repo {
   /** Repository metadata */
   created_at: string;
   last_updated: string;
+
+  // Extended properties from data field (spread in rowToRepo)
+  env_vars?: Record<string, string>;
+  env_file_name?: string;
+  auto_write_env_file_on_create?: boolean;
 }
 
 /**

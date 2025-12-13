@@ -137,6 +137,42 @@ function getMigrationsFolder(db: Database): string {
   return join(__dirname, levelsUp, 'drizzle', dialect);
 }
 
+type JournalEntry = {
+  tag: string;
+};
+
+/**
+ * Ensure migrations folder and meta journal are in sync
+ */
+async function getJournalEntries(migrationsFolder: string): Promise<JournalEntry[]> {
+  const { readFile, readdir } = await import('node:fs/promises');
+  const journalPath = join(migrationsFolder, 'meta', '_journal.json');
+  const journalContent = await readFile(journalPath, 'utf-8');
+  const journal = JSON.parse(journalContent) as { entries: JournalEntry[] };
+
+  const sqlFiles = (await readdir(migrationsFolder)).filter((file) => file.endsWith('.sql'));
+  const fileTags = new Set(sqlFiles.map((file) => file.replace(/\.sql$/, '')));
+  const journalTags = new Set(journal.entries.map((entry) => entry.tag));
+
+  const missingFromJournal = [...fileTags].filter((tag) => !journalTags.has(tag));
+  if (missingFromJournal.length > 0) {
+    throw new MigrationError(
+      `Found migration files not listed in meta/_journal.json: ${missingFromJournal.join(', ')}`
+    );
+  }
+
+  const missingSqlFiles = journal.entries.filter((entry) => !fileTags.has(entry.tag));
+  if (missingSqlFiles.length > 0) {
+    throw new MigrationError(
+      `meta/_journal.json references missing migration files: ${missingSqlFiles
+        .map((entry) => entry.tag)
+        .join(', ')}`
+    );
+  }
+
+  return journal.entries;
+}
+
 /**
  * Check migration status and return pending migrations
  *
@@ -151,24 +187,17 @@ export async function checkMigrationStatus(
   try {
     const migrationsFolder = getMigrationsFolder(db);
 
-    // Read expected migrations from journal
-    const journalPath = join(migrationsFolder, 'meta', '_journal.json');
     const { readFile } = await import('node:fs/promises');
     const { createHash } = await import('node:crypto');
-    const journalContent = await readFile(journalPath, 'utf-8');
-    const journal = JSON.parse(journalContent);
+    const journalEntries = await getJournalEntries(migrationsFolder);
     const expectedMigrations: { tag: string; hash: string }[] = [];
 
     // Compute hash for each migration SQL file
-    for (const entry of journal.entries) {
+    for (const entry of journalEntries) {
       const sqlPath = join(migrationsFolder, `${entry.tag}.sql`);
-      try {
-        const sqlContent = await readFile(sqlPath, 'utf-8');
-        const hash = createHash('sha256').update(sqlContent).digest('hex');
-        expectedMigrations.push({ tag: entry.tag, hash });
-      } catch (err) {
-        console.warn(`Warning: Could not read migration file ${entry.tag}.sql:`, err);
-      }
+      const sqlContent = await readFile(sqlPath, 'utf-8');
+      const hash = createHash('sha256').update(sqlContent).digest('hex');
+      expectedMigrations.push({ tag: entry.tag, hash });
     }
 
     // Get applied migrations from database
@@ -255,6 +284,7 @@ export async function runMigrations(db: Database): Promise<void> {
     const migrationsFolder = getMigrationsFolder(db);
     console.log(`Using migrations folder: ${migrationsFolder}`);
     console.log(`Database dialect: ${isSQLiteDatabase(db) ? 'sqlite' : 'postgres'}`);
+    await getJournalEntries(migrationsFolder);
 
     // Drizzle handles everything:
     // 1. Creates __drizzle_migrations table if needed
