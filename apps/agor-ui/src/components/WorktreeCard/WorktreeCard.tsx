@@ -31,6 +31,7 @@ import { TaskStatusIcon } from '../TaskStatusIcon';
 import { ToolIcon } from '../ToolIcon';
 import { VSCodeIcon } from '../VSCodeIcon';
 import { buildSessionTree, type SessionTreeNode } from './buildSessionTree';
+import { GitActionsDropdown } from './GitActionsDropdown';
 
 const _WORKTREE_CARD_MAX_WIDTH = 600;
 
@@ -604,6 +605,7 @@ const WorktreeCardComponent = ({
                 title="View git diff"
               />
             )}
+            <GitActionsDropdown worktree={worktree} client={client} disabled={connectionDisabled} />
             {!inPopover && onArchiveOrDelete && (
               <Button
                 type="text"

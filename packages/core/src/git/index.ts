@@ -812,3 +812,6 @@ export async function getAvailableRefs(repoPath: string): Promise<{
     return { branches: [], tags: [] };
   }
 }
+
+// Re-export operations for use in services
+export * from './operations';
