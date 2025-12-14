@@ -86,6 +86,8 @@ services:
       - '${DAEMON_PORT:-3030}:${DAEMON_PORT:-3030}'
       # Expose UI port (configurable via UI_PORT env var)
       - '${UI_PORT:-5173}:${UI_PORT:-5173}'
+      # Expose SSH port for multi-user testing (configurable via SSH_PORT env var)
+      - '${SSH_PORT:-2222}:22'
     # Add host.docker.internal mapping for Linux compatibility
     # On Mac/Windows, Docker Desktop provides this automatically
     # On Linux, we need to explicitly map it to the Docker host gateway
