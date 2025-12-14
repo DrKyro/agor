@@ -88,7 +88,55 @@ import type {
   User,
 } from '@agor/core/types';
 import { SessionStatus, TaskStatus } from '@agor/core/types';
+import { buildSpawnArgs } from '@agor/core/unix';
 import { NotFoundError } from '@agor/core/utils/errors';
+
+// ============================================================================
+// GLOBAL ERROR HANDLERS
+// Critical for daemon stability - prevents crashes from unhandled errors
+// ============================================================================
+
+/**
+ * Handle uncaught exceptions
+ *
+ * IMPORTANT: This catches synchronous errors that bubble up to the event loop.
+ * Without this handler, any uncaught exception kills the entire daemon process.
+ *
+ * Common causes:
+ * - Native module crashes (node-pty segfaults)
+ * - Errors in setTimeout/setInterval callbacks
+ * - Errors in event handler callbacks
+ */
+process.on('uncaughtException', (error: Error, origin: string) => {
+  console.error('💥 [FATAL] Uncaught exception:', {
+    error: error.message,
+    stack: error.stack,
+    origin,
+    timestamp: new Date().toISOString(),
+  });
+  // Log but don't exit - let the process manager (pm2, systemd, tsx watch) handle restart
+  // This gives us visibility into what's crashing the daemon
+});
+
+/**
+ * Handle unhandled promise rejections
+ *
+ * IMPORTANT: As of Node 15+, unhandled rejections terminate the process.
+ * This handler prevents that while logging the error for debugging.
+ *
+ * Common causes:
+ * - Async errors in event handlers
+ * - Missing .catch() on promises
+ * - Errors in async setTimeout callbacks
+ */
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  console.error('💥 [FATAL] Unhandled promise rejection:', {
+    reason: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+    timestamp: new Date().toISOString(),
+  });
+  // Don't exit - log and continue. The specific operation failed but daemon can continue.
+});
 
 /**
  * Type guard to check if result is paginated
@@ -504,27 +552,6 @@ async function main() {
       throw err;
     }
 
-    let spawnCommand: string;
-    let spawnArgs: string[];
-
-    if (executorUnixUser) {
-      // Run as different Unix user via sudo
-      spawnCommand = 'sudo';
-      spawnArgs = [
-        '-n', // Non-interactive (fail if password required)
-        '-u',
-        executorUnixUser,
-        'node',
-        ...nodeArgs,
-      ];
-      console.log(`[Daemon] Spawning executor as Unix user: ${executorUnixUser}`);
-    } else {
-      // Run as current user
-      spawnCommand = 'node';
-      spawnArgs = nodeArgs;
-      console.log(`[Daemon] Spawning executor as current user (no impersonation)`);
-    }
-
     // Resolve user environment variables (includes user's encrypted env vars like GITHUB_TOKEN)
     // Use the authenticated user (whoever is executing the command), not session creator
     const userId = (params as AuthenticatedParams).user?.user_id as
@@ -532,9 +559,29 @@ async function main() {
       | undefined;
     const executorEnv = await createUserProcessEnvironment(userId, db);
 
+    // Build spawn args - handles impersonation via sudo su - when executorUnixUser is set
+    // When impersonating, uses sudo su - (login shell) to ensure fresh Unix group memberships
+    // This is critical for RBAC: users may have been recently added to worktree groups
+    // IMPORTANT: When impersonating, env vars must be passed through buildSpawnArgs because
+    // sudo su - creates a fresh login shell that ignores the env passed to spawn()
+    const { cmd: spawnCommand, args: spawnArgs } = buildSpawnArgs('node', nodeArgs, {
+      asUser: executorUnixUser || undefined,
+      env: executorUnixUser ? executorEnv : undefined, // Only inject when impersonating
+    });
+
+    if (executorUnixUser) {
+      console.log(
+        `[Daemon] Spawning executor as Unix user: ${executorUnixUser} (with fresh groups and ${Object.keys(executorEnv).length} env vars)`
+      );
+    } else {
+      console.log(`[Daemon] Spawning executor as current user (no impersonation)`);
+    }
+
+    // When NOT impersonating, pass env to spawn() directly
+    // When impersonating, env is already injected into the command by buildSpawnArgs
     const executorProcess = spawn(spawnCommand, spawnArgs, {
       cwd,
-      env: executorEnv,
+      env: executorUnixUser ? undefined : executorEnv,
       stdio: ['ignore', 'pipe', 'pipe'], // Capture stdout/stderr
     });
 
@@ -719,7 +766,7 @@ async function main() {
   // Only initialize if RBAC is enabled
   let unixIntegrationService: import('@agor/core/unix').UnixIntegrationService | null = null;
   if (worktreeRbacEnabled) {
-    const { createUnixIntegrationService, getAgorDaemonUser } = await import(
+    const { createUnixIntegrationService, requireDaemonUser } = await import(
       './services/unix-integration.js'
     );
     const unixEnabled =
@@ -727,7 +774,7 @@ async function main() {
       config.execution?.unix_user_mode !== undefined;
 
     // Get daemon user - throws if Unix isolation enabled but not configured
-    const daemonUser = getAgorDaemonUser(config);
+    const daemonUser = requireDaemonUser(config);
 
     unixIntegrationService = createUnixIntegrationService(db, {
       enabled: unixEnabled,
@@ -1427,6 +1474,9 @@ async function main() {
                       worktree.worktree_id,
                       creatorId as import('@agor/core/types').UUID
                     );
+                    // Fix permissions on .git/worktrees/<name>/ directory
+                    // Git creates this with umask, so group write is missing
+                    await unixIntegrationService.fixWorktreeGitDirPermissions(worktree.worktree_id);
                   } catch (error) {
                     console.error('[Unix Integration] Failed to setup worktree group:', error);
                     // Continue - app-layer RBAC is still functional
@@ -3204,17 +3254,39 @@ async function main() {
         }
 
         // Find the currently running task(s)
-        const runningTasks = await tasksService.find({
-          query: {
-            session_id: id,
-            status: { $in: [TaskStatus.RUNNING, TaskStatus.AWAITING_PERMISSION] },
-            $limit: 10,
-          },
-        });
+        // Note: Using two separate queries to avoid $in operator which fails schema validation
+        let runningTasksArray: Task[] = [];
+        try {
+          // Query for RUNNING tasks
+          const runningResult = await tasksService.find({
+            query: {
+              session_id: id,
+              status: TaskStatus.RUNNING,
+              $limit: 10,
+            },
+          });
+          const runningFindResult = runningResult as Task[] | Paginated<Task>;
+          const runningTasks = isPaginated(runningFindResult)
+            ? runningFindResult.data
+            : runningFindResult;
 
-        // Extract data array if paginated
-        const findResult = runningTasks as Task[] | Paginated<Task>;
-        const runningTasksArray = isPaginated(findResult) ? findResult.data : findResult;
+          // Query for AWAITING_PERMISSION tasks
+          const awaitingResult = await tasksService.find({
+            query: {
+              session_id: id,
+              status: TaskStatus.AWAITING_PERMISSION,
+              $limit: 10,
+            },
+          });
+          const awaitingFindResult = awaitingResult as Task[] | Paginated<Task>;
+          const awaitingTasks = isPaginated(awaitingFindResult)
+            ? awaitingFindResult.data
+            : awaitingFindResult;
+
+          runningTasksArray = [...runningTasks, ...awaitingTasks];
+        } catch (findError) {
+          throw findError;
+        }
 
         if (runningTasksArray.length === 0) {
           return {
@@ -3241,12 +3313,7 @@ async function main() {
             },
             params
           );
-
-          console.log(
-            `🛑 [Daemon] Stop requested for session ${id.substring(0, 8)}, task ${latestTask.task_id.substring(0, 8)} set to STOPPING`
-          );
         } catch (error) {
-          console.error(`❌ [Daemon] Failed to set STOPPING status:`, error);
           return {
             success: false,
             reason: `Failed to update status: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -3265,8 +3332,6 @@ async function main() {
 
         // PHASE 3: Handle failed stop (revert to RUNNING)
         if (!result.success) {
-          // Stop failed, revert to RUNNING
-          console.warn(`⚠️  [Daemon] Stop failed, reverting to RUNNING`);
           try {
             await tasksService.patch(latestTask.task_id, {
               status: TaskStatus.RUNNING,

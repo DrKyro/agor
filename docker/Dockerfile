@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y \
   less \
   tree \
   openssh-server \
+  acl \
   && rm -rf /var/lib/apt/lists/*
 
 # Configure SSH server for multi-user testing (used in postgres profile)
@@ -61,7 +62,7 @@ RUN npm install -g \
   pnpm@9.15.1 \
   @anthropic-ai/claude-code@2.0.55 \
   @google/gemini-cli@0.18.4 \
-  @openai/codex@0.63.0 \
+  @openai/codex@0.69.0 \
   opencode-ai@latest
 
 # Create non-root 'agor' user (main application user)

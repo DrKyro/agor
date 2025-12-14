@@ -585,7 +585,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
     try {
       await client.service(`sessions/${session.session_id}/stop`).create({});
     } catch (error) {
-      console.error('❌ Failed to stop execution:', error);
+      console.error('Failed to stop execution:', error);
     }
   };
 

@@ -23,22 +23,32 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
 import {
   createUserProcessEnvironment,
   loadConfig,
   resolveUserEnvironment,
 } from '@agor/core/config';
+
 import { type Database, formatShortId, UsersRepository, WorktreeRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
 import type { AuthenticatedParams, UserID, WorktreeID } from '@agor/core/types';
 import {
-  buildImpersonationPrefix,
+  buildSpawnArgs,
   resolveUnixUserForImpersonation,
+  runAsUser,
   type UnixUserMode,
   UnixUserNotFoundError,
   validateResolvedUnixUser,
 } from '@agor/core/unix';
 import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
+
+/**
+ * Default timeout for Zellij operations in milliseconds
+ * 5 seconds is enough for any Zellij command - if it takes longer, something is wrong
+ * This prevents the daemon from freezing if Zellij hangs
+ */
+const ZELLIJ_COMMAND_TIMEOUT_MS = 5000;
 
 interface TerminalSession {
   terminalId: string;
@@ -96,7 +106,7 @@ function escapeForWriteChars(str: string): string {
  */
 function isZellijAvailable(): boolean {
   try {
-    execSync('which zellij', { stdio: 'pipe' });
+    execSync('which zellij', { stdio: 'pipe', timeout: 2000 });
     return true;
   } catch {
     return false;
@@ -150,7 +160,8 @@ ${exportLines.join('\n')}
     if (chownTo) {
       try {
         // CRITICAL: Use -n flag to prevent password prompts that freeze the system
-        execSync(`sudo -n chown "${chownTo}" "${envFile}"`, { stdio: 'pipe' });
+        // Also add timeout to prevent any hangs
+        execSync(`sudo -n chown "${chownTo}" "${envFile}"`, { stdio: 'pipe', timeout: 2000 });
       } catch (chownError) {
         console.warn(`Failed to chown env file to ${chownTo}:`, chownError);
         // Continue anyway - file may still be readable in some configurations
@@ -173,14 +184,20 @@ ${exportLines.join('\n')}
  */
 function zellijSessionExists(sessionName: string, asUser?: string): boolean {
   try {
-    // Use validate=false since caller already validated user exists
-    const prefix = buildImpersonationPrefix(asUser, false);
-    const output = execSync(`${prefix}zellij list-sessions 2>/dev/null`, {
-      encoding: 'utf-8',
-      stdio: 'pipe',
+    console.log(
+      `[Zellij] Checking session exists: ${sessionName} (as: ${asUser || 'daemon user'})`
+    );
+    const output = runAsUser('zellij list-sessions 2>/dev/null', {
+      asUser,
+      timeout: ZELLIJ_COMMAND_TIMEOUT_MS,
     });
     return output.includes(sessionName);
-  } catch {
+  } catch (error) {
+    // Timeout or other error - assume session doesn't exist
+    const isTimeout = error instanceof Error && error.message.includes('ETIMEDOUT');
+    if (isTimeout) {
+      console.warn(`[Zellij] Timeout checking session ${sessionName} - Zellij may be stuck`);
+    }
     return false;
   }
 }
@@ -195,12 +212,21 @@ function zellijSessionExists(sessionName: string, asUser?: string): boolean {
  */
 function runZellijAction(sessionName: string, action: string, asUser?: string): void {
   try {
-    // Use validate=false since caller already validated user exists
-    const prefix = buildImpersonationPrefix(asUser, false);
-    execSync(`${prefix}zellij --session "${sessionName}" action ${action}`, { stdio: 'pipe' });
+    const cmd = `zellij --session "${sessionName}" action ${action}`;
+    runAsUser(cmd, {
+      asUser,
+      timeout: ZELLIJ_COMMAND_TIMEOUT_MS,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`⚠️ Failed to run Zellij action on ${sessionName}: ${action}\n${message}`);
+    const isTimeout = message.includes('ETIMEDOUT');
+    if (isTimeout) {
+      console.warn(
+        `⚠️ [Zellij] Timeout running action on ${sessionName}: ${action} - Zellij may be stuck`
+      );
+    } else {
+      console.warn(`⚠️ Failed to run Zellij action on ${sessionName}: ${action}\n${message}`);
+    }
   }
 }
 
@@ -214,17 +240,13 @@ function runZellijAction(sessionName: string, action: string, asUser?: string): 
  */
 function getZellijTabs(sessionName: string, asUser?: string): string[] {
   try {
-    // Use validate=false since caller already validated user exists
-    const prefix = buildImpersonationPrefix(asUser, false);
     // Use zellij action to dump layout, then parse tab names
     // This is hacky but works - alternative is to maintain our own state
-    const output = execSync(
-      `${prefix}zellij --session "${sessionName}" action dump-layout 2>/dev/null`,
-      {
-        encoding: 'utf-8',
-        stdio: 'pipe',
-      }
-    );
+    const cmd = `zellij --session "${sessionName}" action dump-layout 2>/dev/null`;
+    const output = runAsUser(cmd, {
+      asUser,
+      timeout: ZELLIJ_COMMAND_TIMEOUT_MS,
+    });
 
     // Parse tab names from layout dump (this is brittle, but functional)
     // Layout format includes: name: "tab-name"
@@ -241,7 +263,15 @@ function getZellijTabs(sessionName: string, asUser?: string): string[] {
 
     return tabs;
   } catch (error) {
-    console.warn(`[Zellij] Failed to get tabs for session ${sessionName}:`, error);
+    const message = error instanceof Error ? error.message : String(error);
+    const isTimeout = message.includes('ETIMEDOUT');
+    if (isTimeout) {
+      console.warn(
+        `[Zellij] Timeout getting tabs for session ${sessionName} - Zellij may be stuck`
+      );
+    } else {
+      console.warn(`[Zellij] Failed to get tabs for session ${sessionName}:`, error);
+    }
     return [];
   }
 }
@@ -482,42 +512,45 @@ export class TerminalsService {
     //   - Individual users to customize their experience with their own config
     //   - Session serialization to persist terminal state (useful for worktree persistence)
 
-    if (finalUnixUser) {
-      // Impersonation enabled - run Zellij as specified Unix user via sudo
-      const targetHome = `/home/${finalUnixUser}`;
+    // Wrap pty.spawn in try-catch to handle native module errors gracefully
+    // node-pty is a native module that can throw synchronously on spawn failure
+    try {
+      // Build environment - override HOME/USER when impersonating
+      const spawnEnv = finalUnixUser
+        ? { ...env, HOME: `/home/${finalUnixUser}`, USER: finalUnixUser }
+        : env;
 
-      console.log(`🔐 Running terminal as Unix user: ${finalUnixUser} (${impersonationReason})`);
-
-      // Build sudo args for pty.spawn (requires array, not string)
-      // CRITICAL: Use -n flag to prevent password prompts that freeze the system
-      ptyProcess = pty.spawn(
-        'sudo',
-        ['-n', '-u', finalUnixUser, 'zellij', 'attach', zellijSession, '--create'],
-        {
-          name: 'xterm-256color',
-          cols: data.cols || 80,
-          rows: data.rows || 30,
-          cwd,
-          env: {
-            ...env,
-            HOME: targetHome,
-            USER: finalUnixUser,
-          },
-        }
-      );
-    } else {
-      // No impersonation - run Zellij as daemon user
-      console.log(`🔓 Running terminal as daemon user (${impersonationReason})`);
-
+      // Build spawn args - handles impersonation via sudo su - when finalUnixUser is set
+      // IMPORTANT: When impersonating, env vars must be passed through buildSpawnArgs because
+      // sudo su - creates a fresh login shell that ignores the env passed to pty.spawn()
       const zellijArgs = ['attach', zellijSession, '--create'];
+      const { cmd, args } = buildSpawnArgs('zellij', zellijArgs, {
+        asUser: finalUnixUser || undefined,
+        env: finalUnixUser ? spawnEnv : undefined, // Only inject when impersonating
+      });
 
-      ptyProcess = pty.spawn('zellij', zellijArgs, {
+      // Log impersonation decision
+      if (finalUnixUser) {
+        console.log(
+          `🔐 Running terminal as Unix user: ${finalUnixUser} (${impersonationReason}, ${Object.keys(spawnEnv).length} env vars)`
+        );
+      } else {
+        console.log(`🔓 Running terminal as daemon user (${impersonationReason})`);
+      }
+
+      // When NOT impersonating, pass env to pty.spawn() directly
+      // When impersonating, env is already injected into the command by buildSpawnArgs
+      ptyProcess = pty.spawn(cmd, args, {
         name: 'xterm-256color',
         cols: data.cols || 80,
         rows: data.rows || 30,
         cwd,
-        env,
+        env: finalUnixUser ? undefined : spawnEnv,
       });
+    } catch (spawnError) {
+      const errorMsg = spawnError instanceof Error ? spawnError.message : String(spawnError);
+      console.error(`❌ [Terminal] Failed to spawn PTY for session ${zellijSession}:`, errorMsg);
+      throw new Error(`Failed to create terminal session: ${errorMsg}`);
     }
 
     // Store session (including env for future tab creation)
@@ -536,21 +569,33 @@ export class TerminalsService {
     });
 
     // Handle PTY output
+    // IMPORTANT: Wrap in try-catch to prevent unhandled errors from crashing daemon
     ptyProcess.onData((data) => {
-      this.app.service('terminals').emit('data', {
-        terminalId,
-        data,
-      });
+      try {
+        this.app.service('terminals').emit('data', {
+          terminalId,
+          data,
+        });
+      } catch (error) {
+        console.warn(`[Terminal ${terminalId}] Error emitting data:`, error);
+      }
     });
 
     // Handle PTY exit
+    // IMPORTANT: Wrap in try-catch to prevent unhandled errors from crashing daemon
     ptyProcess.onExit(({ exitCode }) => {
-      console.log(`Terminal ${terminalId} exited with code ${exitCode}`);
-      this.sessions.delete(terminalId);
-      this.app.service('terminals').emit('exit', {
-        terminalId,
-        exitCode,
-      });
+      try {
+        console.log(`Terminal ${terminalId} exited with code ${exitCode}`);
+        this.sessions.delete(terminalId);
+        this.app.service('terminals').emit('exit', {
+          terminalId,
+          exitCode,
+        });
+      } catch (error) {
+        console.warn(`[Terminal ${terminalId}] Error handling exit:`, error);
+        // Still try to clean up session
+        this.sessions.delete(terminalId);
+      }
     });
 
     // After Zellij starts, perform tab management and show welcome message
@@ -602,59 +647,21 @@ export class TerminalsService {
 
           // Wait for tab to be created and shell to initialize
           // Reduced from 300ms to 150ms
+          // IMPORTANT: Wrap in try-catch to prevent crashes from nested setTimeout
           setTimeout(() => {
-            // Build initialization command that sources env and navigates to cwd
-            const initCommands: string[] = [];
-
-            // Source user env file if it exists (silently fail if not)
-            if (envFile) {
-              initCommands.push(
-                `[ -f ${escapeShellArg(envFile)} ] && source ${escapeShellArg(envFile)} 2>/dev/null || true`
-              );
-            }
-
-            // ALWAYS cd to worktree directory to override any shell RC file changes
-            // Use single quotes for maximum safety against shell metacharacters
-            initCommands.push(`cd ${escapeShellArg(cwd)}`);
-
-            // Execute initialization commands
-            if (initCommands.length > 0) {
-              const initScript = initCommands.join(' && ');
-              // Escape the entire script for write-chars (which uses double quotes)
-              runZellijAction(
-                zellijSession,
-                `write-chars "${escapeForWriteChars(initScript)}"`,
-                asUser
-              );
-              runZellijAction(zellijSession, 'write 10', asUser); // Enter key
-            }
-          }, 150);
-        } else if (needsTabSwitch) {
-          // Switch to existing tab
-          runZellijAction(zellijSession, `go-to-tab-name "${tabName}"`, asUser);
-
-          // Wait briefly for tab switch, then clear any incomplete commands
-          // Reduced from 200ms to 100ms
-          setTimeout(() => {
-            // Send Ctrl+C to clear any incomplete command on the prompt
-            // This ensures we start with a clean prompt
-            runZellijAction(zellijSession, 'write 3', asUser); // Ctrl+C (char code 3)
-
-            // Wait a bit for Ctrl+C to take effect and show new prompt
-            // Reduced from 100ms to 50ms
-            setTimeout(() => {
+            try {
               // Build initialization command that sources env and navigates to cwd
               const initCommands: string[] = [];
 
-              // Source user env file if it exists (refresh environment on reuse)
+              // Source user env file if it exists (silently fail if not)
               if (envFile) {
                 initCommands.push(
                   `[ -f ${escapeShellArg(envFile)} ] && source ${escapeShellArg(envFile)} 2>/dev/null || true`
                 );
               }
 
-              // Navigate to worktree directory to ensure we're in the right place
-              // This handles cases where user cd'd elsewhere in a previous session
+              // ALWAYS cd to worktree directory to override any shell RC file changes
+              // Use single quotes for maximum safety against shell metacharacters
               initCommands.push(`cd ${escapeShellArg(cwd)}`);
 
               // Execute initialization commands
@@ -668,7 +675,60 @@ export class TerminalsService {
                 );
                 runZellijAction(zellijSession, 'write 10', asUser); // Enter key
               }
-            }, 50);
+            } catch (error) {
+              console.warn('[Zellij] Error in tab creation callback:', error);
+            }
+          }, 150);
+        } else if (needsTabSwitch) {
+          // Switch to existing tab
+          runZellijAction(zellijSession, `go-to-tab-name "${tabName}"`, asUser);
+
+          // Wait briefly for tab switch, then clear any incomplete commands
+          // Reduced from 200ms to 100ms
+          // IMPORTANT: Wrap in try-catch to prevent crashes from nested setTimeout
+          setTimeout(() => {
+            try {
+              // Send Ctrl+C to clear any incomplete command on the prompt
+              // This ensures we start with a clean prompt
+              runZellijAction(zellijSession, 'write 3', asUser); // Ctrl+C (char code 3)
+
+              // Wait a bit for Ctrl+C to take effect and show new prompt
+              // Reduced from 100ms to 50ms
+              // IMPORTANT: Wrap in try-catch to prevent crashes from nested setTimeout
+              setTimeout(() => {
+                try {
+                  // Build initialization command that sources env and navigates to cwd
+                  const initCommands: string[] = [];
+
+                  // Source user env file if it exists (refresh environment on reuse)
+                  if (envFile) {
+                    initCommands.push(
+                      `[ -f ${escapeShellArg(envFile)} ] && source ${escapeShellArg(envFile)} 2>/dev/null || true`
+                    );
+                  }
+
+                  // Navigate to worktree directory to ensure we're in the right place
+                  // This handles cases where user cd'd elsewhere in a previous session
+                  initCommands.push(`cd ${escapeShellArg(cwd)}`);
+
+                  // Execute initialization commands
+                  if (initCommands.length > 0) {
+                    const initScript = initCommands.join(' && ');
+                    // Escape the entire script for write-chars (which uses double quotes)
+                    runZellijAction(
+                      zellijSession,
+                      `write-chars "${escapeForWriteChars(initScript)}"`,
+                      asUser
+                    );
+                    runZellijAction(zellijSession, 'write 10', asUser); // Enter key
+                  }
+                } catch (error) {
+                  console.warn('[Zellij] Error in tab switch inner callback:', error);
+                }
+              }, 50);
+            } catch (error) {
+              console.warn('[Zellij] Error in tab switch callback:', error);
+            }
           }, 100);
         }
 

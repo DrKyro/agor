@@ -15,7 +15,7 @@
 
 import os from 'node:os';
 import path from 'node:path';
-import { getConfigPath } from '@agor/core/config';
+import { getConfigPath, isWorktreeRbacEnabled, loadConfigSync } from '@agor/core/config';
 import {
   BoardObjectRepository,
   BoardRepository,
@@ -27,7 +27,8 @@ import {
 } from '@agor/core/db';
 import { autoAssignWorktreeUniqueId } from '@agor/core/environment/variable-resolver';
 import { createWorktree } from '@agor/core/git';
-import type { UUID } from '@agor/core/types';
+import type { RepoID, UUID } from '@agor/core/types';
+import { SudoDirectExecutor, UnixIntegrationService } from '@agor/core/unix';
 import chalk from 'chalk';
 
 interface TestUser {
@@ -76,6 +77,21 @@ async function main() {
   const worktreeRepo = new WorktreeRepository(db);
   const boardRepo = new BoardRepository(db);
   const boardObjectRepo = new BoardObjectRepository(db);
+
+  // Setup Unix integration if RBAC is enabled
+  let unixIntegrationService: UnixIntegrationService | null = null;
+  const rbacEnabled = isWorktreeRbacEnabled();
+  if (rbacEnabled) {
+    const config = loadConfigSync();
+    const daemonUser = config.daemon?.unix_user || os.userInfo().username;
+    console.log(
+      chalk.cyan(`🔐 RBAC enabled - Unix integration active (daemon user: ${daemonUser})\n`)
+    );
+    unixIntegrationService = new UnixIntegrationService(db, new SudoDirectExecutor(), {
+      enabled: true,
+      daemonUser,
+    });
+  }
 
   // Create users
   console.log(chalk.bold('1. Creating users...\n'));
@@ -129,6 +145,20 @@ async function main() {
   }
 
   console.log(chalk.green(`  ✓ Found agor repo (${agorRepo.repo_id.substring(0, 8)})`));
+
+  // Ensure repo has Unix group (may have been created before RBAC was enabled)
+  if (unixIntegrationService && !agorRepo.unix_group) {
+    try {
+      const groupName = await unixIntegrationService.createRepoGroup(agorRepo.repo_id as RepoID);
+      console.log(chalk.gray(`    Created missing repo Unix group: ${groupName}`));
+    } catch (error) {
+      console.error(
+        chalk.yellow(
+          `    ⚠️  Failed to create repo group: ${error instanceof Error ? error.message : String(error)}`
+        )
+      );
+    }
+  }
   console.log('');
 
   // Find default board
@@ -255,6 +285,30 @@ async function main() {
       // Add owner
       await worktreeRepo.addOwner(worktree.worktree_id, ownerId);
 
+      // Unix Integration: Create group and add owner (same as daemon hook does)
+      if (unixIntegrationService) {
+        try {
+          // Add owner to repo group (for .git access)
+          await unixIntegrationService.addUserToRepoGroup(agorRepo.repo_id as RepoID, ownerId);
+
+          // Create worktree group and add owner
+          const groupName = await unixIntegrationService.createWorktreeGroup(worktree.worktree_id);
+          await unixIntegrationService.addUserToWorktreeGroup(worktree.worktree_id, ownerId);
+
+          // Fix permissions on .git/worktrees/<name>/ directory
+          await unixIntegrationService.fixWorktreeGitDirPermissions(worktree.worktree_id);
+
+          console.log(chalk.gray(`    Unix group: ${groupName}`));
+        } catch (error) {
+          console.error(
+            chalk.yellow(
+              `    ⚠️  Unix integration failed: ${error instanceof Error ? error.message : String(error)}`
+            )
+          );
+          // Continue - app-layer RBAC is still functional
+        }
+      }
+
       // Create board object with position (spread worktrees horizontally with some jitter)
       const baseX = 0;
       const baseY = 0;
@@ -293,6 +347,25 @@ async function main() {
           // different permission levels in the worktree_owners table
           if (additionalOwner.permission === 'all') {
             await worktreeRepo.addOwner(worktree.worktree_id, additionalUserId);
+            // Also add to Unix groups (repo + worktree)
+            if (unixIntegrationService) {
+              try {
+                // Add to repo group (for .git access)
+                await unixIntegrationService.addUserToRepoGroup(
+                  agorRepo.repo_id as RepoID,
+                  additionalUserId
+                );
+                // Add to worktree group
+                await unixIntegrationService.addUserToWorktreeGroup(
+                  worktree.worktree_id,
+                  additionalUserId
+                );
+              } catch {
+                console.error(
+                  chalk.yellow(`    ⚠️  Failed to add ${additionalOwner.username} to Unix groups`)
+                );
+              }
+            }
             console.log(
               chalk.gray(
                 `    + ${additionalOwner.username} (${additionalOwner.permission} permission)`
