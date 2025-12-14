@@ -353,8 +353,15 @@ export default class SyncUnix extends Command {
             agorHome = join('/home', sudoUser, '.agor');
           }
         } else {
-          // Not running under sudo - use current user's home
-          agorHome = join(homedir(), '.agor');
+          // Not running under sudo - use AGOR_HOME env var or current user's home
+          const customHome = process.env.AGOR_HOME;
+          if (customHome && customHome.trim() !== '') {
+            agorHome = customHome.startsWith('~/')
+              ? join(homedir(), customHome.slice(2))
+              : customHome;
+          } else {
+            agorHome = join(homedir(), '.agor');
+          }
         }
 
         const dbPath = join(agorHome, 'agor.db');

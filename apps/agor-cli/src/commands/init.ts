@@ -158,7 +158,14 @@ export default class Init extends Command {
     this.log('✨ Initializing Agor...\n');
 
     // Determine base directory early
-    const baseDir = flags.local ? join(process.cwd(), '.agor') : join(homedir(), '.agor');
+    const customHome = process.env.AGOR_HOME;
+    const defaultHomeDir =
+      customHome && customHome.trim() !== ''
+        ? customHome.startsWith('~/')
+          ? join(homedir(), customHome.slice(2))
+          : customHome
+        : join(homedir(), '.agor');
+    const baseDir = flags.local ? join(process.cwd(), '.agor') : defaultHomeDir;
 
     // If --skip-if-exists and directory already exists, handle config and exit
     if (flags['skip-if-exists'] && (await this.pathExists(baseDir))) {

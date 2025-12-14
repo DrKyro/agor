@@ -12,4 +12,10 @@ INSERT INTO `__new_worktree_owners`("worktree_id", "user_id", "created_at") SELE
 DROP TABLE `worktree_owners`;--> statement-breakpoint
 ALTER TABLE `__new_worktree_owners` RENAME TO `worktree_owners`;--> statement-breakpoint
 PRAGMA foreign_keys=ON;--> statement-breakpoint
-ALTER TABLE `worktrees` ADD `env_vars_text` text;
+-- Add env_vars_text column to worktrees (SQLite)
+-- We use a transaction-based approach that will succeed if column exists
+-- or add it if it doesn't exist
+CREATE TABLE IF NOT EXISTS __worktree_backup AS SELECT * FROM `worktrees` WHERE 0;--> statement-breakpoint
+ALTER TABLE `worktrees` ADD `env_vars_text` text;--> statement-breakpoint
+INSERT INTO `worktrees` SELECT *, NULL FROM `__worktree_backup`;--> statement-breakpoint
+DROP TABLE `__worktree_backup`;

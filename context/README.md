@@ -54,6 +54,7 @@ Step-by-step implementation guides for common development tasks:
 - **[creating-database-migrations.md](guides/creating-database-migrations.md)** - Creating and running Drizzle migrations for SQLite and PostgreSQL
 - **[extending-feathers-services.md](guides/extending-feathers-services.md)** - Adding new Feathers services with custom methods
 - **[rbac-and-unix-isolation.md](guides/rbac-and-unix-isolation.md)** - Worktree RBAC and Unix user isolation setup
+- **[customizing-data-directory.md](guides/customizing-data-directory.md)** - Customizing Agor data directory location (AGOR_HOME, team collaboration scenarios)
 
 ### Guidelines
 

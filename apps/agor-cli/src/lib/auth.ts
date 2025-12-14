@@ -8,7 +8,21 @@ import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const AGOR_DIR = join(homedir(), '.agor');
+/**
+ * Get Agor home directory (supports AGOR_HOME env var)
+ */
+function getAgorHome(): string {
+  const customHome = process.env.AGOR_HOME;
+  if (customHome && customHome.trim() !== '') {
+    if (customHome.startsWith('~/')) {
+      return join(homedir(), customHome.slice(2));
+    }
+    return customHome;
+  }
+  return join(homedir(), '.agor');
+}
+
+const AGOR_DIR = getAgorHome();
 const TOKEN_FILE = join(AGOR_DIR, 'cli-token');
 
 export interface StoredAuth {

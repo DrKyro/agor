@@ -394,6 +394,18 @@ pnpm agor config set ui.port 5174
 - `PORT` - Daemon port override
 - `VITE_DAEMON_URL` - Full daemon URL for UI
 - `VITE_DAEMON_PORT` - Daemon port for UI
+- `AGOR_HOME` - Custom Agor data directory (default: `~/.agor`)
+
+**Custom Data Directory:**
+
+To store Agor data in a different location (e.g., `/var/tmp/agor` for team collaboration):
+
+```bash
+export AGOR_HOME=/var/tmp/agor
+pnpm dev
+```
+
+For detailed configuration options and team collaboration scenarios, see: `context/guides/customizing-data-directory.md`
 
 ---
 

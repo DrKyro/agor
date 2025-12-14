@@ -96,10 +96,34 @@ export interface CloneResult {
 }
 
 /**
- * Get default Agor repos directory (~/.agor/repos)
+ * Expand a path that may start with ~/
+ */
+function expandHomePath(input: string): string {
+  if (!input) {
+    return input;
+  }
+  if (input.startsWith('~/')) {
+    return join(homedir(), input.slice(2));
+  }
+  return input;
+}
+
+/**
+ * Get Agor home directory (supports AGOR_HOME env var)
+ */
+function getAgorHomeDir(): string {
+  const customHome = process.env.AGOR_HOME;
+  if (customHome && customHome.trim() !== '') {
+    return expandHomePath(customHome);
+  }
+  return join(homedir(), '.agor');
+}
+
+/**
+ * Get default Agor repos directory (~/.agor/repos or $AGOR_HOME/repos)
  */
 export function getReposDir(): string {
-  return join(homedir(), '.agor', 'repos');
+  return join(getAgorHomeDir(), 'repos');
 }
 
 /**
@@ -312,10 +336,10 @@ export async function getRemoteUrl(
 }
 
 /**
- * Get worktrees directory (~/.agor/worktrees)
+ * Get worktrees directory (~/.agor/worktrees or $AGOR_HOME/worktrees)
  */
 export function getWorktreesDir(): string {
-  return join(homedir(), '.agor', 'worktrees');
+  return join(getAgorHomeDir(), 'worktrees');
 }
 
 /**
@@ -631,8 +655,8 @@ export async function deleteWorktreeDirectory(worktreePath: string): Promise<voi
   const { rm } = await import('node:fs/promises');
   const { resolve, relative } = await import('node:path');
 
-  // Safety check: ensure we're only deleting from ~/.agor/worktrees/
-  const worktreesDir = join(homedir(), '.agor', 'worktrees');
+  // Safety check: ensure we're only deleting from worktrees directory
+  const worktreesDir = getWorktreesDir();
 
   // Resolve both paths to eliminate symlinks, '..' segments, etc.
   const resolvedWorktreePath = resolve(worktreePath);

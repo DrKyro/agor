@@ -13,9 +13,18 @@ import { DAEMON } from './constants';
 import type { AgorConfig, UnknownJson } from './types';
 
 /**
- * Get Agor home directory (~/.agor)
+ * Get Agor home directory (~/.agor or AGOR_HOME env var)
+ *
+ * Supports AGOR_HOME environment variable for custom location.
+ * If AGOR_HOME is set, use it; otherwise use ~/.agor.
  */
 export function getAgorHome(): string {
+  // Check AGOR_HOME environment variable first
+  const customHome = process.env.AGOR_HOME;
+  if (customHome && customHome.trim() !== '') {
+    return expandHomePath(customHome);
+  }
+  // Fall back to default ~/.agor
   return path.join(os.homedir(), '.agor');
 }
 
