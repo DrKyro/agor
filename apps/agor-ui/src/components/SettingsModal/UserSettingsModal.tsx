@@ -1,29 +1,38 @@
 import type { AgenticToolName, MCPServer, UpdateUserInput, User } from '@agor/core/types';
 import { getDefaultPermissionMode } from '@agor/core/types';
 import {
+  CloseOutlined,
+  KeyOutlined,
+  RobotOutlined,
+  SettingOutlined,
+  SoundOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
+import type { MenuProps } from 'antd';
+import {
   Button,
+  Checkbox,
   Flex,
   Form,
   Input,
+  Layout,
+  Menu,
   Modal,
   Select,
   Space,
   Switch,
-  Tabs,
   Tag,
   Typography,
+  theme,
 } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
-import { getDaemonUrl } from '../../config/daemon';
-import { DEFAULT_AUDIO_PREFERENCES } from '../../utils/audio';
-import { mergeNotificationPreferences } from '../../utils/notifications';
-import { getStoredAccessToken } from '../../utils/tokenRefresh';
 import { AgenticToolConfigForm } from '../AgenticToolConfigForm';
 import { ApiKeyFields, type ApiKeyStatus } from '../ApiKeyFields';
 import { FormEmojiPickerInput } from '../EmojiPickerInput';
 import { EnvVarEditor } from '../EnvVarEditor';
 import { AudioSettingsTab } from './AudioSettingsTab';
-import { NotificationSettingsTab } from './NotificationSettingsTab';
+
+const { Sider, Content } = Layout;
 
 export interface UserSettingsModalProps {
   open: boolean;
@@ -51,8 +60,6 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
   const [geminiForm] = Form.useForm();
   const [opencodeForm] = Form.useForm();
   const [audioForm] = Form.useForm();
-  const [notificationForm] = Form.useForm();
-  const [sshForm] = Form.useForm();
 
   // API key management state
   const [userApiKeyStatus, setUserApiKeyStatus] = useState<ApiKeyStatus>({
@@ -61,21 +68,10 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     GEMINI_API_KEY: false,
   });
   const [savingApiKeys, setSavingApiKeys] = useState<Record<string, boolean>>({});
-  const [savingSSH, setSavingSSH] = useState(false);
 
   // Environment variable management state
   const [userEnvVars, setUserEnvVars] = useState<Record<string, boolean>>({});
   const [savingEnvVars, setSavingEnvVars] = useState<Record<string, boolean>>({});
-
-  // User-repo environment variables state
-  const [userRepoEnvVars, setUserRepoEnvVars] = useState<Record<string, Record<string, boolean>>>(
-    {}
-  );
-  const [savingUserRepoEnvVars, setSavingUserRepoEnvVars] = useState<Record<string, boolean>>({});
-  const [reposList, setReposList] = useState<
-    Array<{ repo_id: string; slug: string; name: string }>
-  >([]);
-  const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
 
   // Saving state for agentic tool tabs
   const [savingAgenticConfig, setSavingAgenticConfig] = useState<Record<AgenticToolName, boolean>>({
@@ -97,6 +93,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         role: userData.role,
         unix_username: userData.unix_username,
         eventStreamEnabled: userData.preferences?.eventStream?.enabled ?? true,
+        must_change_password: userData.must_change_password ?? false,
       });
 
       // Initialize agentic tool forms with user's defaults
@@ -125,32 +122,15 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       });
 
       // Initialize audio form with user's preferences
-      const audioPrefs = userData.preferences?.audio ?? DEFAULT_AUDIO_PREFERENCES;
+      const audioPrefs = userData.preferences?.audio;
       audioForm.setFieldsValue({
-        enabled: audioPrefs.enabled,
-        chime: audioPrefs.chime,
-        volume: audioPrefs.volume,
-        minDurationSeconds: audioPrefs.minDurationSeconds,
-      });
-
-      const notificationPrefs = mergeNotificationPreferences(userData.preferences?.notifications);
-      notificationForm.setFieldsValue({
-        strategy: notificationPrefs.strategy,
-        desktopEnabled: notificationPrefs.desktop.enabled,
-        desktopRequireInteraction: notificationPrefs.desktop.requireInteraction ?? false,
-        desktopSilent: notificationPrefs.desktop.silent ?? false,
-        toastEnabled: notificationPrefs.toast.enabled,
-      });
-
-      sshForm.setFieldsValue({
-        sshHost: userData.ssh_config?.host,
-        sshPort: userData.ssh_config?.port,
-        sshUser: userData.ssh_config?.user,
-        sshTarget: userData.ssh_config?.target,
-        sshPublicKey: userData.ssh_config?.public_key,
+        enabled: audioPrefs?.enabled ?? true,
+        chime: audioPrefs?.chime ?? 'bell',
+        volume: audioPrefs?.volume ?? 50,
+        minDurationSeconds: audioPrefs?.minDurationSeconds ?? 5,
       });
     },
-    [form, claudeForm, codexForm, geminiForm, audioForm, notificationForm, sshForm]
+    [form, claudeForm, codexForm, geminiForm, audioForm]
   );
 
   // Initialize when modal opens with user data
@@ -186,77 +166,12 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     }
   }, [open, user]);
 
-  const getAuthHeaders = useCallback((): HeadersInit => {
-    const headers: HeadersInit = {};
-    const accessToken = getStoredAccessToken();
-    if (accessToken) {
-      headers.Authorization = `Bearer ${accessToken}`;
-    }
-    return headers;
-  }, []);
-
-  // Load repos and user-repo env vars when modal opens
-  useEffect(() => {
-    if (!open || !user) return;
-
-    const loadData = async () => {
-      try {
-        const daemonUrl = getDaemonUrl();
-        const headers = getAuthHeaders();
-
-        // Load repos
-        const reposResponse = await fetch(`${daemonUrl}/repos`, {
-          headers,
-          credentials: 'include',
-        });
-        if (!reposResponse.ok) {
-          throw new Error(`Failed to load repos: ${reposResponse.status}`);
-        }
-        const reposData = await reposResponse.json();
-        if (reposData?.data) {
-          setReposList(
-            reposData.data.map((repo: { repo_id: string; slug: string; name?: string }) => ({
-              repo_id: repo.repo_id,
-              slug: repo.slug,
-              name: repo.name || repo.slug,
-            }))
-          );
-        }
-
-        // Load user-repo env vars
-        const userRepoVarsResponse = await fetch(`${daemonUrl}/user-repo-env-vars`, {
-          headers,
-          credentials: 'include',
-        });
-        if (!userRepoVarsResponse.ok) {
-          throw new Error(`Failed to load user repo env vars: ${userRepoVarsResponse.status}`);
-        }
-        const userRepoVarsData = await userRepoVarsResponse.json();
-        if (userRepoVarsData?.data) {
-          const grouped: Record<string, Record<string, boolean>> = {};
-          userRepoVarsData.data.forEach(
-            (item: { repo_id: string; env_vars: Record<string, boolean> }) => {
-              grouped[item.repo_id] = item.env_vars;
-            }
-          );
-          setUserRepoEnvVars(grouped);
-        }
-      } catch (err) {
-        console.error('Failed to load repo data:', err);
-      }
-    };
-
-    loadData();
-  }, [open, user, getAuthHeaders]);
-
   const handleClose = () => {
     form.resetFields();
     audioForm.resetFields();
-    notificationForm.resetFields();
     claudeForm.resetFields();
     codexForm.resetFields();
     geminiForm.resetFields();
-    sshForm.resetFields();
     setActiveTab('general');
     onClose();
   };
@@ -284,39 +199,16 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         if (values.password?.trim()) {
           updates.password = values.password;
         }
+        // Only admins can set must_change_password, and only for other users
+        if (currentUser?.role === 'admin' && user.user_id !== currentUser.user_id) {
+          updates.must_change_password = values.must_change_password;
+        }
         onUpdate?.(user.user_id, updates);
         handleClose();
       })
       .catch((err) => {
         console.error('Validation failed:', err);
       });
-  };
-
-  const handleSshSave = async () => {
-    if (!user) return;
-    try {
-      const values = await sshForm.validateFields();
-      setSavingSSH(true);
-      await onUpdate?.(user.user_id, {
-        ssh_config: {
-          host: values.sshHost?.trim() || undefined,
-          port:
-            values.sshPort && !Number.isNaN(Number(values.sshPort))
-              ? Number(values.sshPort)
-              : undefined,
-          user: values.sshUser?.trim() || undefined,
-          target: values.sshTarget?.trim() || undefined,
-          public_key:
-            values.sshPublicKey === undefined
-              ? undefined
-              : values.sshPublicKey.trim().length === 0
-                ? null
-                : values.sshPublicKey,
-        },
-      });
-    } finally {
-      setSavingSSH(false);
-    }
   };
 
   // Handle API key save
@@ -399,100 +291,6 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     }
   };
 
-  // Handle user-repo env var save
-  const handleUserRepoEnvVarSave = async (repoId: string, key: string, value: string) => {
-    if (!user) return;
-
-    try {
-      setSavingUserRepoEnvVars((prev) => ({ ...prev, [key]: true }));
-
-      const daemonUrl = getDaemonUrl();
-      const response = await fetch(`${daemonUrl}/user-repo-env-vars`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders(),
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          user_id: user.user_id,
-          repo_id: repoId,
-          env_vars: { [key]: value },
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save env var');
-      }
-
-      const result = await response.json();
-      if (result?.env_vars) {
-        setUserRepoEnvVars((prev) => ({
-          ...prev,
-          [repoId]: { ...(prev[repoId] || {}), [key]: true },
-        }));
-      }
-    } catch (err) {
-      console.error(`Failed to save ${key}:`, err);
-      throw err;
-    } finally {
-      setSavingUserRepoEnvVars((prev) => ({ ...prev, [key]: false }));
-    }
-  };
-
-  // Handle user-repo env var delete
-  const handleUserRepoEnvVarDelete = async (repoId: string, key: string) => {
-    if (!user) return;
-
-    try {
-      setSavingUserRepoEnvVars((prev) => ({ ...prev, [key]: true }));
-
-      const daemonUrl = getDaemonUrl();
-
-      // First get the record ID
-      const listResponse = await fetch(
-        `${daemonUrl}/user-repo-env-vars?user_id=${user.user_id}&repo_id=${repoId}`,
-        {
-          headers: getAuthHeaders(),
-          credentials: 'include',
-        }
-      );
-      const listData = await listResponse.json();
-      const record = listData?.data?.[0];
-
-      if (record?.id) {
-        const response = await fetch(`${daemonUrl}/user-repo-env-vars/${record.id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            ...getAuthHeaders(),
-          },
-          credentials: 'include',
-          body: JSON.stringify({
-            env_vars: { [key]: null },
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to delete env var');
-        }
-
-        setUserRepoEnvVars((prev) => {
-          const updated = { ...prev };
-          if (updated[repoId]) {
-            delete updated[repoId][key];
-          }
-          return updated;
-        });
-      }
-    } catch (err) {
-      console.error(`Failed to delete ${key}:`, err);
-      throw err;
-    } finally {
-      setSavingUserRepoEnvVars((prev) => ({ ...prev, [key]: false }));
-    }
-  };
-
   // Handle agentic tool config save
   const handleAgenticConfigSave = async (tool: AgenticToolName) => {
     if (!user) return;
@@ -565,7 +363,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     if (!user || !onUpdate) return;
 
     try {
-      const values = await audioForm.validateFields();
+      const values = audioForm.getFieldsValue();
       const updatedPreferences = {
         ...user.preferences,
         audio: {
@@ -576,43 +374,13 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         },
       };
 
-      await onUpdate(user.user_id, {
+      onUpdate(user.user_id, {
         preferences: updatedPreferences,
       });
 
       handleClose();
     } catch (error) {
       console.error('Failed to save audio settings:', error);
-    }
-  };
-
-  const handleNotificationSave = async () => {
-    if (!user || !onUpdate) return;
-
-    try {
-      const values = await notificationForm.validateFields();
-      const updatedPreferences = {
-        ...user.preferences,
-        notifications: {
-          strategy: values.strategy,
-          desktop: {
-            enabled: values.desktopEnabled ?? false,
-            requireInteraction: values.desktopRequireInteraction ?? false,
-            silent: values.desktopSilent ?? false,
-          },
-          toast: {
-            enabled: values.toastEnabled ?? true,
-          },
-        },
-      };
-
-      await onUpdate(user.user_id, {
-        preferences: updatedPreferences,
-      });
-
-      handleClose();
-    } catch (error) {
-      console.error('Failed to save notification settings:', error);
     }
   };
 
@@ -626,13 +394,8 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         break;
       case 'api-keys':
       case 'env-vars':
-      case 'repo-env-vars':
-      case 'ssh':
         // These tabs save individually, just close
         handleClose();
-        break;
-      case 'notifications':
-        await handleNotificationSave();
         break;
       case 'audio':
         await handleAudioSave();
@@ -640,349 +403,353 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       case 'claude-code':
       case 'codex':
       case 'gemini':
+      case 'opencode':
         await handleAgenticConfigSave(activeTab as AgenticToolName);
         break;
     }
   };
 
+  const { token } = theme.useToken();
+
+  // Menu items for left sidebar navigation
+  const menuItems: MenuProps['items'] = [
+    {
+      key: 'profile',
+      label: 'Profile',
+      type: 'group',
+      children: [
+        {
+          key: 'general',
+          label: 'General',
+          icon: <SettingOutlined />,
+        },
+        {
+          key: 'env-vars',
+          label: 'Env Vars',
+          icon: <ThunderboltOutlined />,
+        },
+        {
+          key: 'audio',
+          label: 'Audio',
+          icon: <SoundOutlined />,
+        },
+      ],
+    },
+    {
+      key: 'agentic-tools',
+      label: 'Agentic Tools',
+      type: 'group',
+      children: [
+        {
+          key: 'api-keys',
+          label: 'API Keys',
+          icon: <KeyOutlined />,
+        },
+        {
+          key: 'claude-code',
+          label: 'Claude Code',
+          icon: <RobotOutlined />,
+        },
+        {
+          key: 'codex',
+          label: 'Codex',
+          icon: <RobotOutlined />,
+        },
+        {
+          key: 'gemini',
+          label: 'Gemini',
+          icon: <RobotOutlined />,
+        },
+        {
+          key: 'opencode',
+          label: 'OpenCode',
+          icon: <RobotOutlined />,
+        },
+      ],
+    },
+  ];
+
+  // Render content based on active section
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'general':
+        return (
+          <Form form={form} layout="vertical">
+            <Form.Item label="Name" style={{ marginBottom: 24 }}>
+              <Flex gap={8}>
+                <Form.Item name="emoji" noStyle>
+                  <FormEmojiPickerInput form={form} fieldName="emoji" defaultEmoji="👤" />
+                </Form.Item>
+                <Form.Item name="name" noStyle style={{ flex: 1 }}>
+                  <Input placeholder="John Doe" style={{ flex: 1 }} />
+                </Form.Item>
+              </Flex>
+            </Form.Item>
+
+            <Form.Item
+              label="Email"
+              name="email"
+              rules={[
+                { required: true, message: 'Please enter an email' },
+                { type: 'email', message: 'Please enter a valid email' },
+              ]}
+            >
+              <Input placeholder="user@example.com" />
+            </Form.Item>
+
+            <Form.Item
+              label="Unix Username"
+              name="unix_username"
+              help={
+                currentUser?.role === 'admin'
+                  ? 'Unix user for process impersonation (alphanumeric, hyphens, underscores only)'
+                  : 'Maintained by administrators'
+              }
+              rules={[
+                {
+                  pattern: /^[a-z0-9_-]+$/,
+                  message: 'Only lowercase letters, numbers, hyphens, and underscores allowed',
+                },
+                { max: 32, message: 'Unix username must be 32 characters or less' },
+              ]}
+            >
+              <Input
+                placeholder="johnsmith"
+                maxLength={32}
+                disabled={currentUser?.role !== 'admin'}
+              />
+            </Form.Item>
+
+            <Form.Item label="Password" name="password" help="Leave blank to keep current password">
+              <Input.Password placeholder="••••••••" />
+            </Form.Item>
+
+            <Form.Item
+              label={
+                <Space size={4}>
+                  Enable Live Event Stream
+                  <Tag color={token.colorPrimary} style={{ fontSize: 10, marginLeft: 4 }}>
+                    BETA
+                  </Tag>
+                </Space>
+              }
+              name="eventStreamEnabled"
+              valuePropName="checked"
+              tooltip="Show/hide the event stream icon in the navbar. When enabled, you can view live WebSocket events for debugging."
+            >
+              <Switch />
+            </Form.Item>
+
+            <Form.Item
+              label="Role"
+              name="role"
+              rules={[{ required: true, message: 'Please select a role' }]}
+              help={currentUser?.role !== 'admin' ? 'Maintained by administrators' : undefined}
+            >
+              <Select disabled={currentUser?.role !== 'admin'}>
+                {/* <Select.Option value="owner">Owner</Select.Option> */}
+                <Select.Option value="admin">Admin</Select.Option>
+                <Select.Option value="member">Member</Select.Option>
+                <Select.Option value="viewer">Viewer</Select.Option>
+              </Select>
+            </Form.Item>
+
+            {/* Only show for admins editing other users */}
+            {currentUser?.role === 'admin' && user && user.user_id !== currentUser.user_id && (
+              <Form.Item name="must_change_password" valuePropName="checked">
+                <Checkbox>Force password change on next login</Checkbox>
+              </Form.Item>
+            )}
+          </Form>
+        );
+      case 'api-keys':
+        return (
+          <>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+              Per-user API keys take precedence over global settings. These keys are encrypted at
+              rest.
+            </Typography.Paragraph>
+            <ApiKeyFields
+              keyStatus={userApiKeyStatus}
+              onSave={handleApiKeySave}
+              onClear={handleApiKeyClear}
+              saving={savingApiKeys}
+            />
+          </>
+        );
+      case 'env-vars':
+        return (
+          <>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+              Environment variables are encrypted at rest and available to all sessions for this
+              user.
+            </Typography.Paragraph>
+            <EnvVarEditor
+              envVars={userEnvVars}
+              onSave={handleEnvVarSave}
+              onDelete={handleEnvVarDelete}
+              loading={savingEnvVars}
+            />
+          </>
+        );
+      case 'audio':
+        return <AudioSettingsTab user={user} form={audioForm} />;
+      case 'claude-code':
+      case 'codex':
+      case 'gemini':
+      case 'opencode': {
+        const toolName = activeTab as AgenticToolName;
+        const formMap = {
+          'claude-code': claudeForm,
+          codex: codexForm,
+          gemini: geminiForm,
+          opencode: opencodeForm,
+        };
+        const currentForm = formMap[toolName];
+        const displayNames: Record<AgenticToolName, string> = {
+          'claude-code': 'Claude Code',
+          codex: 'Codex',
+          gemini: 'Gemini',
+          opencode: 'OpenCode',
+        };
+        return (
+          <>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+              Configure default settings for {displayNames[toolName]}. These will prepopulate
+              session creation forms.
+            </Typography.Paragraph>
+            <Form form={currentForm} layout="vertical">
+              <AgenticToolConfigForm
+                agenticTool={toolName}
+                mcpServerById={mcpServerById}
+                showHelpText={false}
+              />
+            </Form>
+            <div style={{ marginTop: 16 }}>
+              <Button onClick={() => handleAgenticConfigClear(toolName)}>Clear Defaults</Button>
+            </div>
+          </>
+        );
+      }
+      default:
+        return null;
+    }
+  };
+
+  // Get title for current section
+  const getSectionTitle = () => {
+    const titles: Record<string, string> = {
+      general: 'General',
+      'api-keys': 'API Keys',
+      'env-vars': 'Environment Variables',
+      audio: 'Audio',
+      'claude-code': 'Claude Code',
+      codex: 'Codex',
+      gemini: 'Gemini',
+      opencode: 'OpenCode',
+    };
+    return titles[activeTab] || 'User Settings';
+  };
+
   return (
     <Modal
-      title="User Settings"
+      title={null}
       open={open}
-      onOk={handleModalSave}
       onCancel={handleClose}
-      okText="Save"
-      cancelText="Close"
-      confirmLoading={
-        activeTab === 'claude-code'
-          ? savingAgenticConfig['claude-code']
-          : activeTab === 'codex'
-            ? savingAgenticConfig.codex
-            : activeTab === 'gemini'
-              ? savingAgenticConfig.gemini
-              : false
+      footer={
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: 8,
+            padding: '12px 24px',
+            background: token.colorBgContainer,
+          }}
+        >
+          <Button onClick={handleClose}>Close</Button>
+          <Button
+            type="primary"
+            onClick={handleModalSave}
+            loading={
+              activeTab === 'claude-code'
+                ? savingAgenticConfig['claude-code']
+                : activeTab === 'codex'
+                  ? savingAgenticConfig.codex
+                  : activeTab === 'gemini'
+                    ? savingAgenticConfig.gemini
+                    : activeTab === 'opencode'
+                      ? savingAgenticConfig.opencode
+                      : false
+            }
+          >
+            Save
+          </Button>
+        </div>
       }
+      closable
       width={900}
+      style={{ top: 40 }}
       styles={{
+        wrapper: {
+          padding: 0,
+          overflow: 'hidden',
+        },
+        header: {
+          display: 'none',
+        },
         body: {
-          height: '500px',
-          overflowY: 'auto',
+          padding: 0,
+          height: 'calc(100vh - 280px)',
+          minHeight: 450,
+          maxHeight: 650,
+        },
+        footer: {
+          padding: 0,
+          margin: 0,
+          background: token.colorBgContainer,
+          borderTop: `1px solid ${token.colorBorderSecondary}`,
         },
       }}
+      closeIcon={<CloseOutlined />}
     >
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        style={{ marginTop: 16 }}
-        items={[
-          {
-            key: 'general',
-            label: 'General',
-            children: (
-              <Form form={form} layout="vertical" style={{ paddingTop: 8 }}>
-                <Form.Item label="Name" style={{ marginBottom: 24 }}>
-                  <Flex gap={8}>
-                    <Form.Item name="emoji" noStyle>
-                      <FormEmojiPickerInput form={form} fieldName="emoji" defaultEmoji="👤" />
-                    </Form.Item>
-                    <Form.Item name="name" noStyle style={{ flex: 1 }}>
-                      <Input placeholder="John Doe" style={{ flex: 1 }} />
-                    </Form.Item>
-                  </Flex>
-                </Form.Item>
-
-                <Form.Item
-                  label="Email"
-                  name="email"
-                  rules={[
-                    { required: true, message: 'Please enter an email' },
-                    { type: 'email', message: 'Please enter a valid email' },
-                  ]}
-                >
-                  <Input placeholder="user@example.com" />
-                </Form.Item>
-
-                <Form.Item
-                  label="Unix Username"
-                  name="unix_username"
-                  help={
-                    currentUser?.role === 'admin'
-                      ? 'Unix user for process impersonation (alphanumeric, hyphens, underscores only)'
-                      : 'Maintained by administrators'
-                  }
-                  rules={[
-                    {
-                      pattern: /^[a-z0-9_-]+$/,
-                      message: 'Only lowercase letters, numbers, hyphens, and underscores allowed',
-                    },
-                    { max: 32, message: 'Unix username must be 32 characters or less' },
-                  ]}
-                >
-                  <Input
-                    placeholder="johnsmith"
-                    maxLength={32}
-                    disabled={currentUser?.role !== 'admin'}
-                  />
-                </Form.Item>
-
-                <Form.Item
-                  label="Password"
-                  name="password"
-                  help="Leave blank to keep current password"
-                >
-                  <Input.Password placeholder="••••••••" />
-                </Form.Item>
-
-                <Form.Item
-                  label={
-                    <Space size={4}>
-                      Enable Live Event Stream
-                      <Tag color="blue" style={{ fontSize: 10, marginLeft: 4 }}>
-                        BETA
-                      </Tag>
-                    </Space>
-                  }
-                  name="eventStreamEnabled"
-                  valuePropName="checked"
-                  tooltip="Show/hide the event stream icon in the navbar. When enabled, you can view live WebSocket events for debugging."
-                >
-                  <Switch />
-                </Form.Item>
-
-                <Form.Item
-                  label="Role"
-                  name="role"
-                  rules={[{ required: true, message: 'Please select a role' }]}
-                  help={currentUser?.role !== 'admin' ? 'Maintained by administrators' : undefined}
-                >
-                  <Select disabled={currentUser?.role !== 'admin'}>
-                    {/* <Select.Option value="owner">Owner</Select.Option> */}
-                    <Select.Option value="admin">Admin</Select.Option>
-                    <Select.Option value="member">Member</Select.Option>
-                    <Select.Option value="viewer">Viewer</Select.Option>
-                  </Select>
-                </Form.Item>
-              </Form>
-            ),
-          },
-          {
-            key: 'ssh',
-            label: 'SSH / VS Code',
-            children: (
-              <div style={{ paddingTop: 8 }}>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                  每个用户可配置自己的 Remote SSH 目标与公钥。公钥会写入目标用户的
-                  <code style={{ marginLeft: 4 }}>authorized_keys</code>（当前主机），以便 VS Code
-                  Remote SSH 使用。仅接受 <code>.pub</code> 公钥，不要上传私钥。
-                </Typography.Paragraph>
-                <Form form={sshForm} layout="vertical">
-                  <Form.Item label="SSH Host" name="sshHost">
-                    <Input placeholder="example.com" />
-                  </Form.Item>
-                  <Form.Item label="SSH Port" name="sshPort">
-                    <Input placeholder="22" />
-                  </Form.Item>
-                  <Form.Item label="SSH User" name="sshUser">
-                    <Input placeholder="devuser" />
-                  </Form.Item>
-                  <Form.Item
-                    label="SSH Target (可选)"
-                    name="sshTarget"
-                    extra="如使用 ~/.ssh/config 的 Host 别名，在此填写；否则留空自动拼接 user@host"
-                  >
-                    <Input placeholder="my-ssh-alias" />
-                  </Form.Item>
-                  <Form.Item
-                    label="SSH 公钥 (.pub)"
-                    name="sshPublicKey"
-                    extra="粘贴 id_ed25519.pub / id_rsa.pub 内容；留空并保存可清除公钥与授权记录"
-                  >
-                    <Input.TextArea rows={4} placeholder="ssh-ed25519 AAAA... comment" />
-                  </Form.Item>
-                </Form>
-                <Space direction="vertical" size={4} style={{ marginTop: 8 }}>
-                  {user?.ssh_config?.public_key_fingerprint && (
-                    <Typography.Text type="secondary">
-                      指纹：{user.ssh_config.public_key_fingerprint}
-                    </Typography.Text>
-                  )}
-                  {user?.ssh_config?.authorized_keys_path && (
-                    <Typography.Text type="secondary">
-                      authorized_keys：{user.ssh_config.authorized_keys_path}
-                    </Typography.Text>
-                  )}
-                  {user?.ssh_config?.last_authorized_keys_error && (
-                    <Typography.Text type="danger">
-                      写 authorized_keys 失败：{user.ssh_config.last_authorized_keys_error}
-                    </Typography.Text>
-                  )}
-                </Space>
-                <div style={{ marginTop: 16 }}>
-                  <Button type="primary" onClick={handleSshSave} loading={savingSSH}>
-                    保存 SSH 设置
-                  </Button>
-                </div>
-              </div>
-            ),
-          },
-          {
-            key: 'api-keys',
-            label: 'API Keys',
-            children: (
-              <div style={{ paddingTop: 8 }}>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                  Per-user API keys take precedence over global settings. These keys are encrypted
-                  at rest.
-                </Typography.Paragraph>
-                <ApiKeyFields
-                  keyStatus={userApiKeyStatus}
-                  onSave={handleApiKeySave}
-                  onClear={handleApiKeyClear}
-                  saving={savingApiKeys}
-                />
-              </div>
-            ),
-          },
-          {
-            key: 'env-vars',
-            label: 'Env Vars',
-            children: (
-              <div style={{ paddingTop: 8 }}>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                  Environment variables are encrypted at rest and available to all sessions for this
-                  user.
-                </Typography.Paragraph>
-                <EnvVarEditor
-                  envVars={userEnvVars}
-                  onSave={handleEnvVarSave}
-                  onDelete={handleEnvVarDelete}
-                  loading={savingEnvVars}
-                />
-              </div>
-            ),
-          },
-          {
-            key: 'repo-env-vars',
-            label: 'Repo Env',
-            children: (
-              <div style={{ paddingTop: 8 }}>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                  设置您对特定仓库的环境变量。这些变量会覆盖您的全局环境变量，但会被工作树的变量覆盖。
-                </Typography.Paragraph>
-                <div style={{ marginBottom: 16 }}>
-                  <Select
-                    placeholder="选择仓库"
-                    style={{ width: '100%', maxWidth: 400 }}
-                    value={selectedRepoId}
-                    onChange={setSelectedRepoId}
-                    options={reposList.map((repo) => ({
-                      value: repo.repo_id,
-                      label: `${repo.name} (${repo.slug})`,
-                    }))}
-                  />
-                </div>
-                {selectedRepoId && (
-                  <EnvVarEditor
-                    envVars={userRepoEnvVars[selectedRepoId] || {}}
-                    onSave={(key, value) => handleUserRepoEnvVarSave(selectedRepoId, key, value)}
-                    onDelete={(key) => handleUserRepoEnvVarDelete(selectedRepoId, key)}
-                    loading={savingUserRepoEnvVars}
-                  />
-                )}
-                {!selectedRepoId && (
-                  <Typography.Text type="secondary">请选择一个仓库来编辑其环境变量</Typography.Text>
-                )}
-              </div>
-            ),
-          },
-          {
-            key: 'notifications',
-            label: 'Notifications',
-            children: (
-              <div style={{ paddingTop: 8 }}>
-                <NotificationSettingsTab user={user} form={notificationForm} isOpen={open} />
-              </div>
-            ),
-          },
-          {
-            key: 'audio',
-            label: 'Audio',
-            children: (
-              <div style={{ paddingTop: 8 }}>
-                <AudioSettingsTab user={user} form={audioForm} />
-              </div>
-            ),
-          },
-          {
-            key: 'claude-code',
-            label: 'Claude Code',
-            children: (
-              <div style={{ paddingTop: 8 }}>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                  Configure default settings for Claude Code. These will prepopulate session
-                  creation forms.
-                </Typography.Paragraph>
-                <Form form={claudeForm} layout="vertical">
-                  <AgenticToolConfigForm
-                    agenticTool="claude-code"
-                    mcpServerById={mcpServerById}
-                    showHelpText={false}
-                  />
-                </Form>
-                <div style={{ marginTop: 16 }}>
-                  <Button onClick={() => handleAgenticConfigClear('claude-code')}>
-                    Clear Defaults
-                  </Button>
-                </div>
-              </div>
-            ),
-          },
-          {
-            key: 'codex',
-            label: 'Codex',
-            children: (
-              <div style={{ paddingTop: 8 }}>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                  Configure default settings for Codex. These will prepopulate session creation
-                  forms.
-                </Typography.Paragraph>
-                <Form form={codexForm} layout="vertical">
-                  <AgenticToolConfigForm
-                    agenticTool="codex"
-                    mcpServerById={mcpServerById}
-                    showHelpText={false}
-                  />
-                </Form>
-                <div style={{ marginTop: 16 }}>
-                  <Button onClick={() => handleAgenticConfigClear('codex')}>Clear Defaults</Button>
-                </div>
-              </div>
-            ),
-          },
-          {
-            key: 'gemini',
-            label: 'Gemini',
-            children: (
-              <div style={{ paddingTop: 8 }}>
-                <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                  Configure default settings for Gemini. These will prepopulate session creation
-                  forms.
-                </Typography.Paragraph>
-                <Form form={geminiForm} layout="vertical">
-                  <AgenticToolConfigForm
-                    agenticTool="gemini"
-                    mcpServerById={mcpServerById}
-                    showHelpText={false}
-                  />
-                </Form>
-                <div style={{ marginTop: 16 }}>
-                  <Button onClick={() => handleAgenticConfigClear('gemini')}>Clear Defaults</Button>
-                </div>
-              </div>
-            ),
-          },
-        ]}
-      />
+      <Layout style={{ height: '100%', background: token.colorBgContainer }}>
+        <Sider
+          width={200}
+          style={{
+            background: token.colorBgElevated,
+            borderRight: `1px solid ${token.colorBorderSecondary}`,
+            overflow: 'auto',
+            padding: '20px 0',
+          }}
+        >
+          <div
+            style={{
+              padding: '0 24px 16px',
+              fontWeight: 600,
+              fontSize: 18,
+              color: token.colorText,
+            }}
+          >
+            User Settings
+          </div>
+          <Menu
+            mode="inline"
+            selectedKeys={[activeTab]}
+            onClick={({ key }) => setActiveTab(key)}
+            items={menuItems}
+            style={{
+              border: 'none',
+              background: 'transparent',
+            }}
+          />
+        </Sider>
+        <Content style={{ padding: '24px 32px', overflow: 'auto' }}>
+          <Typography.Title level={4} style={{ marginTop: 0, marginBottom: 20 }}>
+            {getSectionTitle()}
+          </Typography.Title>
+          {renderContent()}
+        </Content>
+      </Layout>
     </Modal>
   );
 };

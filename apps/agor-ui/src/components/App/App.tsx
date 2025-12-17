@@ -138,6 +138,10 @@ export interface AppProps {
   onDeleteComment?: (commentId: string) => void;
   onLogout?: () => void;
   onRetryConnection?: () => void;
+  /** Instance label for deployment identification (displayed as a Tag in navbar) */
+  instanceLabel?: string;
+  /** Instance description (markdown) shown in popover around the instance label */
+  instanceDescription?: string;
 }
 
 export const App: React.FC<AppProps> = ({
@@ -201,6 +205,8 @@ export const App: React.FC<AppProps> = ({
   onDeleteComment,
   onLogout,
   onRetryConnection,
+  instanceLabel,
+  instanceDescription,
 }) => {
   const { showWarning, showSuccess, showError } = useThemedMessage();
   const location = useLocation();
@@ -709,6 +715,8 @@ export const App: React.FC<AppProps> = ({
                 // This would require exposing a method on SessionCanvasRef
               }
             }}
+            instanceLabel={instanceLabel}
+            instanceDescription={instanceDescription}
           />
           <Content style={{ position: 'relative', overflow: 'hidden', display: 'flex' }}>
             <PanelGroup

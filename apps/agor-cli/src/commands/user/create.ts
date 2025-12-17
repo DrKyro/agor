@@ -35,6 +35,10 @@ export default class UserCreate extends BaseCommand {
       options: [/* 'owner', */ 'admin', 'member', 'viewer'], // owner role unused
       default: 'admin',
     }),
+    'force-password-change': Flags.boolean({
+      description: 'Force user to change password on first login',
+      default: false,
+    }),
   };
 
   async run(): Promise<void> {
@@ -102,7 +106,7 @@ export default class UserCreate extends BaseCommand {
         password,
         name: name || undefined,
         role: flags.role as UserRole,
-        // CLI 创建暂不接受公钥，保持类型兼容（显式不带 ssh_config）
+        must_change_password: flags['force-password-change'],
       };
       // Cast to Partial<User> to satisfy service typing (CLI 不写 ssh_config)
       const user = await client.service('users').create(userData as Partial<User>);
@@ -113,6 +117,9 @@ export default class UserCreate extends BaseCommand {
       this.log(`  Name:  ${chalk.cyan(user.name || '(not set)')}`);
       this.log(`  Role:  ${chalk.cyan(user.role)}`);
       this.log(`  ID:    ${chalk.gray(user.user_id.substring(0, 8))}`);
+      if (user.must_change_password) {
+        this.log(`  ${chalk.yellow('⚠')} User must change password on first login`);
+      }
       this.log('');
       this.log(chalk.gray('Next steps:'));
       this.log(chalk.gray('  1. Start daemon: pnpm --filter @agor/daemon dev'));

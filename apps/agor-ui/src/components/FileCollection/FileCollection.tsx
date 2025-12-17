@@ -22,7 +22,7 @@ import {
 } from '@ant-design/icons';
 import { Button, Empty, Input, Spin, Tooltip, Tree } from 'antd';
 import type React from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConceptListItem } from '../../types';
 import { useThemedMessage } from '../../utils/message';
 
@@ -245,7 +245,7 @@ function buildTree(
   return sortNodes(roots);
 }
 
-export const FileCollection: React.FC<FileCollectionProps> = ({
+const FileCollectionInner: React.FC<FileCollectionProps> = ({
   files,
   onFileClick,
   onDownload,
@@ -257,7 +257,20 @@ export const FileCollection: React.FC<FileCollectionProps> = ({
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const { showSuccess } = useThemedMessage();
 
-  // Handle copy path
+  // Use refs to store stable callback references
+  const onDownloadRef = useRef(onDownload);
+  onDownloadRef.current = onDownload;
+
+  const onFileClickRef = useRef(onFileClick);
+  onFileClickRef.current = onFileClick;
+
+  // Ref to track debounce timer
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Ref to track if we should auto-expand on next treeData change (only after search input changes)
+  const pendingSearchExpandRef = useRef<string | null>(null);
+
+  // Handle copy path - stable callback
   const handleCopyPath = useCallback(
     (file: FileItem) => {
       navigator.clipboard.writeText(file.path);
@@ -266,18 +279,23 @@ export const FileCollection: React.FC<FileCollectionProps> = ({
     [showSuccess]
   );
 
-  // Build tree structure
+  // Stable wrapper for onDownload
+  const stableOnDownload = useCallback((file: FileItem) => {
+    onDownloadRef.current?.(file);
+  }, []);
+
+  // Build tree structure - only depends on files, searchQuery, and stable callbacks
   const treeData = useMemo(
-    () => buildTree(files, searchQuery, onDownload, handleCopyPath),
-    [files, searchQuery, onDownload, handleCopyPath]
+    () => buildTree(files, searchQuery, stableOnDownload, handleCopyPath),
+    [files, searchQuery, stableOnDownload, handleCopyPath]
   );
 
-  // Handle node selection
-  const handleSelect = (_selectedKeys: React.Key[], info: { node: TreeNode }) => {
+  // Handle node selection - stable callback using ref
+  const handleSelect = useCallback((_selectedKeys: React.Key[], info: { node: TreeNode }) => {
     if (info.node.isLeaf && info.node.file) {
-      onFileClick(info.node.file);
+      onFileClickRef.current(info.node.file);
     }
-  };
+  }, []);
 
   // Get all directory keys for expansion
   const getAllKeys = useCallback((nodes: TreeNode[]): string[] => {
@@ -294,33 +312,77 @@ export const FileCollection: React.FC<FileCollectionProps> = ({
     return keys;
   }, []);
 
-  // Debounced search effect
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSearchQuery(searchInput);
+  // Handle search input change with debounce
+  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchInput(value);
 
-      if (searchInput) {
-        // Expand all directories when searching
-        const allKeys = getAllKeys(treeData);
-        setExpandedKeys(allKeys);
-      } else {
-        // Collapse all when clearing search
-        setExpandedKeys([]);
-      }
+    // Clear any pending debounce
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    // Debounce the actual search query update
+    debounceTimerRef.current = setTimeout(() => {
+      setSearchQuery(value);
+      // Mark that we need to expand/collapse after treeData updates
+      pendingSearchExpandRef.current = value;
     }, SEARCH_DEBOUNCE_MS);
-
-    return () => clearTimeout(timer);
-  }, [searchInput, treeData, getAllKeys]);
-
-  // Handle search input change (live filtering with debounce)
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchInput(e.target.value);
-  };
+  }, []);
 
   // Handle explicit search button click
-  const handleSearch = (value: string) => {
+  const handleSearch = useCallback((value: string) => {
+    // Clear any pending debounce
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
     setSearchInput(value);
-  };
+    setSearchQuery(value);
+    pendingSearchExpandRef.current = value;
+  }, []);
+
+  // Cleanup debounce timer on unmount to prevent setState after unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Handle expansion after treeData changes due to search
+  // Using useEffect to avoid state updates during render (React StrictMode warning)
+  const prevTreeDataRef = useRef(treeData);
+  useEffect(() => {
+    if (prevTreeDataRef.current !== treeData && pendingSearchExpandRef.current !== null) {
+      const searchValue = pendingSearchExpandRef.current;
+      pendingSearchExpandRef.current = null;
+
+      if (searchValue) {
+        // Expand all directories when searching
+        const allKeys = getAllKeys(treeData);
+        // Only update if keys actually changed to avoid unnecessary re-renders
+        setExpandedKeys((currentKeys) => {
+          if (
+            allKeys.length !== currentKeys.length ||
+            !allKeys.every((k) => currentKeys.includes(k))
+          ) {
+            return allKeys;
+          }
+          return currentKeys;
+        });
+      } else {
+        // Collapse all when clearing search (only if not already collapsed)
+        setExpandedKeys((currentKeys) => (currentKeys.length > 0 ? [] : currentKeys));
+      }
+    }
+    prevTreeDataRef.current = treeData;
+  }, [treeData, getAllKeys]);
+
+  // Handle expand/collapse - this is the user's manual expansion, don't reset it
+  const handleExpand = useCallback((keys: React.Key[]) => {
+    setExpandedKeys(keys as string[]);
+  }, []);
 
   if (loading) {
     return (
@@ -356,7 +418,7 @@ export const FileCollection: React.FC<FileCollectionProps> = ({
         onSelect={handleSelect}
         showIcon={false}
         expandedKeys={expandedKeys}
-        onExpand={(keys) => setExpandedKeys(keys as string[])}
+        onExpand={handleExpand}
         style={{ background: 'transparent' }}
         virtual
         height={600}
@@ -364,3 +426,15 @@ export const FileCollection: React.FC<FileCollectionProps> = ({
     </div>
   );
 };
+
+// Memoize the component to prevent re-renders when parent re-renders with same props
+export const FileCollection = memo(FileCollectionInner, (prevProps, nextProps) => {
+  // Custom comparison - only re-render if these specific props changed
+  return (
+    prevProps.loading === nextProps.loading &&
+    prevProps.emptyMessage === nextProps.emptyMessage &&
+    prevProps.files === nextProps.files
+    // Note: we intentionally don't compare onFileClick and onDownload
+    // since we use refs internally to always get the latest callback
+  );
+});

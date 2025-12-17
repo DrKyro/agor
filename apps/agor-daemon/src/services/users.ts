@@ -36,13 +36,7 @@ interface CreateUserData {
   emoji?: string;
   role?: 'owner' | 'admin' | 'member' | 'viewer';
   unix_username?: string;
-  ssh_config?: {
-    host?: string;
-    port?: number;
-    user?: string;
-    target?: string;
-    public_key?: string | null;
-  };
+  must_change_password?: boolean;
 }
 
 /**
@@ -55,6 +49,7 @@ interface UpdateUserData {
   emoji?: string;
   role?: 'owner' | 'admin' | 'member' | 'viewer';
   unix_username?: string;
+  must_change_password?: boolean;
   avatar?: string;
   preferences?: Record<string, unknown>;
   onboarding_completed?: boolean;
@@ -154,6 +149,7 @@ export class UsersService {
         emoji: data.emoji || defaultEmoji,
         role,
         unix_username: data.unix_username,
+        must_change_password: data.must_change_password ?? false,
         created_at: now,
         updated_at: now,
         data: {
@@ -176,6 +172,13 @@ export class UsersService {
     // Handle password separately (needs hashing)
     if (data.password) {
       updates.password = await hash(data.password, 10);
+      // Auto-clear must_change_password when password is changed,
+      // UNLESS explicitly set in the same request (admin reset + force change scenario)
+      // e.g., `user update --password newpass --force-password-change` should keep flag true
+      updates.must_change_password = data.must_change_password ?? false;
+    } else if (data.must_change_password !== undefined) {
+      // Handle must_change_password flag when set WITHOUT password change (admin toggle)
+      updates.must_change_password = data.must_change_password;
     }
 
     // Update other fields
@@ -550,6 +553,7 @@ export class UsersService {
       avatar: data.avatar,
       preferences: data.preferences,
       onboarding_completed: !!row.onboarding_completed,
+      must_change_password: !!row.must_change_password,
       created_at: row.created_at,
       updated_at: row.updated_at ?? undefined,
       // Return key status (boolean), NOT actual keys
@@ -625,6 +629,7 @@ class UsersServiceWithAuth extends UsersService {
       avatar: data.avatar,
       preferences: data.preferences,
       onboarding_completed: !!row.onboarding_completed,
+      must_change_password: !!row.must_change_password,
       created_at: row.created_at,
       updated_at: row.updated_at ?? undefined,
       api_keys: data.api_keys
