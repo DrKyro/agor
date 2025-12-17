@@ -69,9 +69,23 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
   });
   const [savingApiKeys, setSavingApiKeys] = useState<Record<string, boolean>>({});
 
+  // SSH configuration state
+  const [sshForm] = Form.useForm();
+  const [savingSSH, setSavingSSH] = useState(false);
+
   // Environment variable management state
   const [userEnvVars, setUserEnvVars] = useState<Record<string, boolean>>({});
   const [savingEnvVars, setSavingEnvVars] = useState<Record<string, boolean>>({});
+
+  // User-repo environment variables state
+  const [userRepoEnvVars, setUserRepoEnvVars] = useState<Record<string, Record<string, boolean>>>(
+    {}
+  );
+  const [savingUserRepoEnvVars, setSavingUserRepoEnvVars] = useState<Record<string, boolean>>({});
+  const [reposList, _setReposList] = useState<
+    Array<{ repo_id: string; slug: string; name: string }>
+  >([]);
+  const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
 
   // Saving state for agentic tool tabs
   const [savingAgenticConfig, setSavingAgenticConfig] = useState<Record<AgenticToolName, boolean>>({
@@ -129,8 +143,16 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         volume: audioPrefs?.volume ?? 50,
         minDurationSeconds: audioPrefs?.minDurationSeconds ?? 5,
       });
+
+      sshForm.setFieldsValue({
+        sshHost: userData.ssh_config?.host,
+        sshPort: userData.ssh_config?.port,
+        sshUser: userData.ssh_config?.user,
+        sshTarget: userData.ssh_config?.target,
+        sshPublicKey: userData.ssh_config?.public_key,
+      });
     },
-    [form, claudeForm, codexForm, geminiForm, audioForm]
+    [form, claudeForm, codexForm, geminiForm, audioForm, sshForm]
   );
 
   // Initialize when modal opens with user data
@@ -291,6 +313,119 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     }
   };
 
+  // Handle SSH save
+  const handleSshSave = async () => {
+    if (!user) return;
+    try {
+      const values = await sshForm.validateFields();
+      setSavingSSH(true);
+      await onUpdate?.(user.user_id, {
+        ssh_config: {
+          host: values.sshHost?.trim() || undefined,
+          port:
+            values.sshPort && !Number.isNaN(Number(values.sshPort))
+              ? Number(values.sshPort)
+              : undefined,
+          user: values.sshUser?.trim() || undefined,
+          target: values.sshTarget?.trim() || undefined,
+          public_key:
+            values.sshPublicKey === undefined
+              ? undefined
+              : values.sshPublicKey.trim().length === 0
+                ? null
+                : values.sshPublicKey,
+        },
+      });
+    } finally {
+      setSavingSSH(false);
+    }
+  };
+
+  // Handle user-repo env var save
+  const handleUserRepoEnvVarSave = async (repoId: string, key: string, value: string) => {
+    if (!user) return;
+
+    try {
+      setSavingUserRepoEnvVars((prev) => ({ ...prev, [key]: true }));
+
+      const daemonUrl = 'http://localhost:3030'; // TODO: Get from config
+      const response = await fetch(`${daemonUrl}/user-repo-env-vars`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // TODO: Add auth headers
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          user_id: user.user_id,
+          repo_id: repoId,
+          env_vars: { [key]: value },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save env var');
+      }
+
+      const result = await response.json();
+      if (result?.env_vars) {
+        setUserRepoEnvVars((prev) => ({
+          ...prev,
+          [repoId]: { ...(prev[repoId] || {}), [key]: true },
+        }));
+      }
+    } catch (err) {
+      console.error(`Failed to save ${key}:`, err);
+      throw err;
+    } finally {
+      setSavingUserRepoEnvVars((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  // Handle user-repo env var delete
+  const handleUserRepoEnvVarDelete = async (repoId: string, key: string) => {
+    if (!user) return;
+
+    try {
+      setSavingUserRepoEnvVars((prev) => ({ ...prev, [key]: true }));
+
+      const daemonUrl = 'http://localhost:3030'; // TODO: Get from config
+      const response = await fetch(`${daemonUrl}/user-repo-env-vars`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          // TODO: Add auth headers
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          user_id: user.user_id,
+          repo_id: repoId,
+          env_var_keys: [key],
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete env var');
+      }
+
+      setUserRepoEnvVars((prev) => {
+        const updated = { ...prev };
+        if (updated[repoId]) {
+          delete updated[repoId][key];
+          if (Object.keys(updated[repoId]).length === 0) {
+            delete updated[repoId];
+          }
+        }
+        return updated;
+      });
+    } catch (err) {
+      console.error(`Failed to delete ${key}:`, err);
+      throw err;
+    } finally {
+      setSavingUserRepoEnvVars((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
   // Handle agentic tool config save
   const handleAgenticConfigSave = async (tool: AgenticToolName) => {
     if (!user) return;
@@ -397,6 +532,14 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         // These tabs save individually, just close
         handleClose();
         break;
+      case 'ssh':
+        await handleSshSave();
+        handleClose();
+        break;
+      case 'repo-env-vars':
+        // Repo env vars save individually, just close
+        handleClose();
+        break;
       case 'audio':
         await handleAudioSave();
         break;
@@ -426,6 +569,16 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         {
           key: 'env-vars',
           label: 'Env Vars',
+          icon: <ThunderboltOutlined />,
+        },
+        {
+          key: 'ssh',
+          label: 'SSH / VS Code',
+          icon: <KeyOutlined />,
+        },
+        {
+          key: 'repo-env-vars',
+          label: 'Repo Env',
           icon: <ThunderboltOutlined />,
         },
         {
@@ -594,6 +747,94 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         );
       case 'audio':
         return <AudioSettingsTab user={user} form={audioForm} />;
+      case 'ssh':
+        return (
+          <div>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+              每个用户可配置自己的 Remote SSH 目标与公钥。公钥会写入目标用户的
+              <code style={{ marginLeft: 4 }}>authorized_keys</code>（当前主机），以便 VS Code
+              Remote SSH 使用。仅接受 <code>.pub</code> 公钥，不要上传私钥。
+            </Typography.Paragraph>
+            <Form form={sshForm} layout="vertical">
+              <Form.Item label="SSH Host" name="sshHost">
+                <Input placeholder="example.com" />
+              </Form.Item>
+              <Form.Item label="SSH Port" name="sshPort">
+                <Input placeholder="22" />
+              </Form.Item>
+              <Form.Item label="SSH User" name="sshUser">
+                <Input placeholder="devuser" />
+              </Form.Item>
+              <Form.Item
+                label="SSH Target (可选)"
+                name="sshTarget"
+                extra="如使用 ~/.ssh/config 的 Host 别名，在此填写；否则留空自动拼接 user@host"
+              >
+                <Input placeholder="my-ssh-alias" />
+              </Form.Item>
+              <Form.Item
+                label="SSH 公钥 (.pub)"
+                name="sshPublicKey"
+                extra="粘贴 id_ed25519.pub / id_rsa.pub 内容；留空并保存可清除公钥与授权记录"
+              >
+                <Input.TextArea rows={4} placeholder="ssh-ed25519 AAAA... comment" />
+              </Form.Item>
+            </Form>
+            <Space direction="vertical" size={4} style={{ marginTop: 8 }}>
+              {user?.ssh_config?.public_key_fingerprint && (
+                <Typography.Text type="secondary">
+                  指纹：{user.ssh_config.public_key_fingerprint}
+                </Typography.Text>
+              )}
+              {user?.ssh_config?.authorized_keys_path && (
+                <Typography.Text type="secondary">
+                  authorized_keys：{user.ssh_config.authorized_keys_path}
+                </Typography.Text>
+              )}
+              {user?.ssh_config?.last_authorized_keys_error && (
+                <Typography.Text type="danger">
+                  写 authorized_keys 失败：{user.ssh_config.last_authorized_keys_error}
+                </Typography.Text>
+              )}
+            </Space>
+            <div style={{ marginTop: 16 }}>
+              <Button type="primary" onClick={handleSshSave} loading={savingSSH}>
+                保存 SSH 设置
+              </Button>
+            </div>
+          </div>
+        );
+      case 'repo-env-vars':
+        return (
+          <div>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+              设置您对特定仓库的环境变量。这些变量会覆盖您的全局环境变量，但会被工作树的变量覆盖。
+            </Typography.Paragraph>
+            <div style={{ marginBottom: 16 }}>
+              <Select
+                placeholder="选择仓库"
+                style={{ width: '100%', maxWidth: 400 }}
+                value={selectedRepoId}
+                onChange={setSelectedRepoId}
+                options={reposList.map((repo) => ({
+                  value: repo.repo_id,
+                  label: `${repo.name} (${repo.slug})`,
+                }))}
+              />
+            </div>
+            {selectedRepoId && (
+              <EnvVarEditor
+                envVars={userRepoEnvVars[selectedRepoId] || {}}
+                onSave={(key, value) => handleUserRepoEnvVarSave(selectedRepoId, key, value)}
+                onDelete={(key) => handleUserRepoEnvVarDelete(selectedRepoId, key)}
+                loading={savingUserRepoEnvVars}
+              />
+            )}
+            {!selectedRepoId && (
+              <Typography.Text type="secondary">请选择一个仓库来编辑其环境变量</Typography.Text>
+            )}
+          </div>
+        );
       case 'claude-code':
       case 'codex':
       case 'gemini':
@@ -642,6 +883,8 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       general: 'General',
       'api-keys': 'API Keys',
       'env-vars': 'Environment Variables',
+      ssh: 'SSH / VS Code',
+      'repo-env-vars': 'Repo Environment Variables',
       audio: 'Audio',
       'claude-code': 'Claude Code',
       codex: 'Codex',

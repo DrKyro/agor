@@ -37,6 +37,13 @@ interface CreateUserData {
   role?: 'owner' | 'admin' | 'member' | 'viewer';
   unix_username?: string;
   must_change_password?: boolean;
+  ssh_config?: {
+    host?: string;
+    port?: number;
+    user?: string;
+    target?: string;
+    public_key?: string | null;
+  };
 }
 
 /**
