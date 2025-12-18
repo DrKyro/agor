@@ -7,7 +7,10 @@
 
 ## Overview
 
-Agor exposes itself as a **Model Context Protocol server** so agents can introspect worktrees, sessions, boards, and users without hard-coded CLI calls. The daemon mounts a JSON-RPC endpoint at `POST /mcp` that authenticates with the current session's MCP token and routes requests through Feathers services.
+Agor exposes itself as a **Model Context Protocol server** so agents (and external MCP clients) can introspect and manage worktrees, sessions, boards, and users without hard-coded CLI calls. The daemon mounts a JSON-RPC endpoint at `POST /mcp` that supports:
+
+- **Session-scoped MCP tokens** (for "this session" self-awareness)
+- **Global MCP authentication** (for "manage any project/board/session" control surfaces)
 
 The built-in toolset mirrors Agor's primitives:
 
@@ -27,8 +30,10 @@ The built-in toolset mirrors Agor's primitives:
 ## Usage
 
 1. Start the daemon (`pnpm dev` in `apps/agor-daemon`).
-2. In the UI, open Session Settings → MCP Tokens → "Generate MCP Token".
-3. Configure your agent (Claude Desktop, Cursor MCP, etc.) to hit `http://localhost:3030/mcp` with that token in `sessionToken` metadata.
+2. Choose an auth mode:
+   - **Session-scoped**: use that session's `mcp_token` as `?sessionToken=...`
+   - **Global**: set `daemon.mcpGlobalToken` in `~/.agor/config.yaml` (or `AGOR_MCP_GLOBAL_TOKEN`) and authenticate with `Authorization: Bearer <token>` (or `X-Agor-MCP-Token`, or `?mcpToken=...`)
+3. Configure your MCP client to call `http://localhost:3030/mcp`.
 4. Call tools like `agor_sessions_prompt` to continue work or `agor_worktrees_start_environment` to manage environments.
 
 ## Implementation References

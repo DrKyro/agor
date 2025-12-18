@@ -8,6 +8,7 @@ export type SettingsSection =
   | 'boards'
   | 'repos'
   | 'worktrees'
+  | 'mcp-access'
   | 'mcp'
   | 'agentic-tools'
   | 'users'
@@ -64,6 +65,7 @@ export function useSettingsRoute() {
       'boards',
       'repos',
       'worktrees',
+      'mcp-access',
       'mcp',
       'agentic-tools',
       'users',
