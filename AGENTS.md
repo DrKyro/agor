@@ -1,5 +1,5 @@
 # CLAUDE.md
-
+永远用简体中文回复！
 **Agor** — Multiplayer canvas for orchestrating Claude Code, Codex, and Gemini sessions.
 
 Manage git worktrees, track AI conversations, visualize work on spatial boards, and collaborate in real-time.
