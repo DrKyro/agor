@@ -19,20 +19,56 @@ function maskApiKey(key: string | undefined): string | undefined {
   return `${key.substring(0, 10)}...`;
 }
 
+function maskSecret(secret: string | undefined): string | undefined {
+  if (!secret || typeof secret !== 'string') return undefined;
+  if (secret.length <= 10) return '***';
+  return `${secret.substring(0, 10)}...`;
+}
+
 /**
  * Mask all credentials in config
  */
-function maskCredentials(config: AgorConfig): AgorConfig {
-  if (!config.credentials) return config;
-
+function maskSensitive(config: AgorConfig): AgorConfig {
   return {
     ...config,
-    credentials: {
-      ANTHROPIC_API_KEY: maskApiKey(config.credentials.ANTHROPIC_API_KEY),
-      OPENAI_API_KEY: maskApiKey(config.credentials.OPENAI_API_KEY),
-      GEMINI_API_KEY: maskApiKey(config.credentials.GEMINI_API_KEY),
-    },
+    credentials: config.credentials
+      ? {
+          ANTHROPIC_API_KEY: maskApiKey(config.credentials.ANTHROPIC_API_KEY),
+          OPENAI_API_KEY: maskApiKey(config.credentials.OPENAI_API_KEY),
+          GEMINI_API_KEY: maskApiKey(config.credentials.GEMINI_API_KEY),
+        }
+      : config.credentials,
+    daemon: config.daemon
+      ? {
+          ...config.daemon,
+          mcpGlobalToken: maskSecret(config.daemon.mcpGlobalToken),
+        }
+      : config.daemon,
   };
+}
+
+function redactPatchForLogs(data: Partial<AgorConfig>): Partial<AgorConfig> {
+  const redacted: Partial<AgorConfig> = { ...data };
+
+  if (data.credentials) {
+    redacted.credentials = {};
+    for (const [key, value] of Object.entries(data.credentials)) {
+      (redacted.credentials as Record<string, string | null>)[key] = value === null ? null : '***';
+    }
+  }
+
+  if (data.daemon) {
+    redacted.daemon = { ...data.daemon };
+    if (Object.hasOwn(data.daemon, 'mcpGlobalToken')) {
+      // biome-ignore lint/suspicious/noExplicitAny: partial config patch
+      (redacted.daemon as any).mcpGlobalToken =
+        data.daemon.mcpGlobalToken === null || data.daemon.mcpGlobalToken === undefined
+          ? data.daemon.mcpGlobalToken
+          : '***';
+    }
+  }
+
+  return redacted;
 }
 
 /**
@@ -52,7 +88,7 @@ export class ConfigService {
    */
   async find(_params?: Params): Promise<AgorConfig> {
     const config = await loadConfig();
-    return maskCredentials(config);
+    return maskSensitive(config);
   }
 
   /**
@@ -60,7 +96,7 @@ export class ConfigService {
    */
   async get(id: string, _params?: Params): Promise<unknown> {
     const config = await loadConfig();
-    const masked = maskCredentials(config);
+    const masked = maskSensitive(config);
 
     // Support dot notation (e.g., "credentials.ANTHROPIC_API_KEY")
     const parts = id.split('.');
@@ -122,10 +158,13 @@ export class ConfigService {
   /**
    * Update config values
    *
-   * SECURITY: Only allow updating credentials and opencode sections from UI
+   * SECURITY: Only allow updating explicitly whitelisted sections from UI
    */
   async patch(_id: null, data: Partial<AgorConfig>, _params?: Params): Promise<AgorConfig> {
-    console.log('[Config Service] Patch received:', JSON.stringify(data, null, 2));
+    console.log(
+      '[Config Service] Patch received:',
+      JSON.stringify(redactPatchForLogs(data), null, 2)
+    );
     const config = await loadConfig();
 
     // Only allow updating credentials section for security
@@ -229,6 +268,47 @@ export class ConfigService {
       }
     }
 
+    // Allow updating daemon MCP access configuration (global MCP token)
+    if (data.daemon) {
+      if (!config.daemon) {
+        config.daemon = {};
+      }
+
+      if (Object.hasOwn(data.daemon, 'mcpEnabled')) {
+        if (typeof data.daemon.mcpEnabled === 'boolean') {
+          config.daemon.mcpEnabled = data.daemon.mcpEnabled;
+        } else if (data.daemon.mcpEnabled === undefined) {
+          // no-op
+        } else {
+          throw new Error('daemon.mcpEnabled must be a boolean');
+        }
+      }
+
+      if (Object.hasOwn(data.daemon, 'mcpGlobalToken')) {
+        const token = data.daemon.mcpGlobalToken;
+        if (token === null || token === undefined || token === '') {
+          delete config.daemon.mcpGlobalToken;
+          delete process.env.AGOR_MCP_GLOBAL_TOKEN;
+        } else if (typeof token === 'string') {
+          config.daemon.mcpGlobalToken = token;
+          process.env.AGOR_MCP_GLOBAL_TOKEN = token;
+        } else {
+          throw new Error('daemon.mcpGlobalToken must be a string');
+        }
+      }
+
+      if (Object.hasOwn(data.daemon, 'mcpGlobalUserId')) {
+        const userId = data.daemon.mcpGlobalUserId;
+        if (userId === null || userId === undefined || userId === '') {
+          delete config.daemon.mcpGlobalUserId;
+        } else if (typeof userId === 'string') {
+          config.daemon.mcpGlobalUserId = userId;
+        } else {
+          throw new Error('daemon.mcpGlobalUserId must be a string');
+        }
+      }
+    }
+
     await saveConfig(config);
     console.log('[Config Service] Config saved successfully');
     // Hot-update in-memory config so runtime features read latest values
@@ -249,7 +329,7 @@ export class ConfigService {
     }
 
     // Return masked config
-    return maskCredentials(config);
+    return maskSensitive(config);
   }
 }
 

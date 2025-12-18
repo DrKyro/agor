@@ -19,6 +19,7 @@ import {
   CloseOutlined,
   FolderOutlined,
   InfoCircleOutlined,
+  KeyOutlined,
   RobotOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
@@ -30,6 +31,7 @@ import type { WorktreeUpdate } from '../WorktreeModal/tabs/GeneralTab';
 import { AboutTab } from './AboutTab';
 import { AgenticToolsSection } from './AgenticToolsSection';
 import { BoardsTable } from './BoardsTable';
+import { MCPAccessTab } from './MCPAccessTab';
 import { MCPServersTable } from './MCPServersTable';
 import { ReposTable } from './ReposTable';
 import { UsersTable } from './UsersTable';
@@ -189,6 +191,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       type: 'group',
       children: [
         {
+          key: 'mcp-access',
+          label: 'MCP Access',
+          icon: <KeyOutlined />,
+        },
+        {
           key: 'mcp',
           label: 'MCP Servers',
           icon: <ApiOutlined />,
@@ -266,6 +273,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             onStopEnvironment={onStopEnvironment}
           />
         );
+      case 'mcp-access':
+        return <MCPAccessTab client={client} currentUser={currentUser} />;
       case 'mcp':
         return (
           <MCPServersTable

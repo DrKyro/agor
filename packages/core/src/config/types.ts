@@ -62,6 +62,25 @@ export interface AgorDaemonSettings {
   /** Enable built-in MCP server (default: true) */
   mcpEnabled?: boolean;
 
+  /**
+   * Global MCP token for external clients (optional).
+   *
+   * When set, external MCP clients may authenticate to `POST /mcp` using either:
+   * - `Authorization: Bearer <token>`
+   * - `X-Agor-MCP-Token: <token>`
+   *
+   * This is intended for "global MCP" control surfaces where the client is not
+   * scoped to a single session token.
+   */
+  mcpGlobalToken?: string;
+
+  /**
+   * User ID to attribute global MCP actions to (optional).
+   *
+   * Defaults to 'anonymous' when `mcpGlobalToken` is used.
+   */
+  mcpGlobalUserId?: string;
+
   /** Unix user the daemon runs as. Used to ensure daemon has access to all Unix groups.
    * Required when Unix isolation is enabled (worktree_rbac or unix_user_mode).
    * In dev mode without isolation, falls back to current process user. */
