@@ -1,5 +1,5 @@
 import type { AgorClient } from '@agor/core/api';
-import type { User } from '@agor/core/types';
+import type { User, UserID } from '@agor/core/types';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import { App, Modal } from 'antd';
@@ -81,7 +81,6 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
   const { modal } = App.useApp();
   const terminalDivRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
-  const [_terminalId, setTerminalId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [sessionInfo, setSessionInfo] = useState<{
     zellijSession?: string;
@@ -98,41 +97,47 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
     // Skip terminal setup for non-admin users
     if (!isAdmin) return;
 
+    // Executor mode requires user to be logged in
+    if (!user?.user_id) {
+      console.error('[Terminal] Terminal requires authenticated user');
+      return;
+    }
+
     let mounted = true;
-    let currentTerminalId: string | null = null;
+    let currentChannel: string | null = null;
     let transformData: (value: string) => string = (value) => value;
-    const terminalService = client.service('terminals');
+    const socket = client.io;
 
-    const removeListeners = () => {
-      terminalService.removeListener?.('data', handleData);
-      terminalService.removeListener?.('exit', handleExit);
-    };
-
-    const handleData = (payload: unknown) => {
-      if (!terminalRef.current || typeof payload !== 'object' || payload === null) {
-        return;
-      }
-      const message = payload as Partial<{ terminalId: string; data: string }>;
-      if (message.terminalId === currentTerminalId && typeof message.data === 'string') {
-        terminalRef.current.write(transformData(message.data));
+    // Cleanup channel listeners
+    const removeChannelListeners = () => {
+      if (socket) {
+        socket.off('terminal:output', handleChannelOutput);
+        socket.off('terminal:exit', handleChannelExit);
+        if (currentChannel) {
+          socket.emit('leave', currentChannel);
+        }
       }
     };
 
-    const handleExit = (payload: unknown) => {
-      if (!terminalRef.current || typeof payload !== 'object' || payload === null) {
-        return;
+    // Channel-based event handlers
+    const handleChannelOutput = (payload: { userId: string; data: string }) => {
+      if (!terminalRef.current) return;
+      if (payload.userId === user?.user_id) {
+        terminalRef.current.write(transformData(payload.data));
       }
-      const message = payload as Partial<{ terminalId: string; exitCode: number }>;
-      if (message.terminalId === currentTerminalId && typeof message.exitCode === 'number') {
-        terminalRef.current.writeln(`\r\n\r\n[Process exited with code ${message.exitCode}]`);
+    };
+
+    const handleChannelExit = (payload: { userId: string; exitCode: number }) => {
+      if (!terminalRef.current) return;
+      if (payload.userId === user?.user_id) {
+        terminalRef.current.writeln(`\r\n\r\n[Terminal exited with code ${payload.exitCode}]`);
         terminalRef.current.writeln('[Close and reopen terminal to start a new session]');
+        setIsConnected(false);
       }
     };
 
-    // Create terminal instance and connect to backend
-    const setupTerminal = async () => {
-      // Create xterm instance with larger size to fit modal
-      // Custom theme with Agor teal (#2e9a92) for cyan
+    // Create xterm instance with common configuration
+    const createTerminalInstance = () => {
       const terminal = new Terminal({
         allowProposedApi: true,
         fontSize: 14,
@@ -183,72 +188,98 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
       terminalRef.current = terminal;
 
       // Load Web Links addon for clickable URLs
-      // Double-click to open (default behavior to avoid conflicts with Zellij mouse mode)
-      const webLinksAddon = new WebLinksAddon((event, uri) => {
+      const webLinksAddon = new WebLinksAddon((_event, uri) => {
         console.log('[Terminal] Link clicked:', uri);
         window.open(uri, '_blank', 'noopener,noreferrer');
       });
       terminal.loadAddon(webLinksAddon);
 
-      terminal.writeln('🚀 Connecting to shell...');
+      return terminal;
+    };
+
+    // Setup terminal (channel I/O via Zellij executor)
+    const setupTerminal = async () => {
+      const terminal = createTerminalInstance();
 
       try {
-        // Create terminal session on backend
+        // Request terminal from daemon
+        // This spawns an executor with zellij.attach if not already running
         const result = (await client.service('terminals').create({
           rows: 40,
           cols: 160,
           worktreeId,
         })) as {
-          terminalId: string;
-          cwd: string;
-          zellijSession: string;
-          zellijReused: boolean;
+          userId: UserID;
+          channel: string;
+          sessionName: string;
+          isNew: boolean;
           worktreeName?: string;
         };
 
         if (!mounted) {
-          // If unmounted during connection, clean up immediately
-          client.service('terminals').remove(result.terminalId).catch(console.error);
           return;
         }
 
-        currentTerminalId = result.terminalId;
-        setTerminalId(result.terminalId);
+        currentChannel = result.channel;
         setIsConnected(true);
         transformData = expandOscHyperlinks;
         setSessionInfo({
-          zellijSession: result.zellijSession,
-          zellijReused: result.zellijReused,
+          zellijSession: result.sessionName,
+          zellijReused: !result.isNew,
           worktreeName: result.worktreeName,
         });
-        terminal.clear();
+        // Only clear for new sessions - reconnections will get screen via redraw
+        if (result.isNew) {
+          terminal.clear();
+        }
+
+        // Join the user's terminal channel
+        socket.emit('join', result.channel);
+
+        // Listen for terminal output via channel
+        socket.on('terminal:output', handleChannelOutput);
+        socket.on('terminal:exit', handleChannelExit);
+
+        // Handle user input - send via channel
+        terminal.onData((data) => {
+          socket.emit('terminal:input', {
+            userId: user?.user_id,
+            input: data,
+          });
+        });
+
+        // Handle terminal resize
+        terminal.onResize(({ cols, rows }) => {
+          socket.emit('terminal:resize', {
+            userId: user?.user_id,
+            cols,
+            rows,
+          });
+        });
+
+        // Send initial resize to trigger Zellij full redraw (important for reconnections)
+        // This ensures the tab bar and status bar are properly rendered
+        socket.emit('terminal:resize', {
+          userId: user?.user_id,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        });
 
         // Execute initial commands if provided
         if (initialCommands.length > 0) {
           for (const cmd of initialCommands) {
-            // Send command with carriage return to execute
-            client.service('terminals').patch(result.terminalId, { input: `${cmd}\r` });
+            socket.emit('terminal:input', {
+              userId: user?.user_id,
+              input: `${cmd}\r`,
+            });
           }
         }
 
-        // Handle user input - send to backend
-        // FeathersJS automatically uses WebSocket when available, REST as fallback
-        terminal.onData((data) => {
-          if (result.terminalId && client) {
-            client.service('terminals').patch(result.terminalId, { input: data });
-          }
-        });
-
-        // Listen for terminal output from backend
-        removeListeners();
-        terminalService.on('data', handleData);
-
-        // Listen for terminal exit
-        terminalService.on('exit', handleExit);
+        console.log(`[Terminal] Connected to executor terminal via channel: ${result.channel}`);
       } catch (error) {
-        console.error('Failed to create terminal:', error);
+        console.error('[Terminal] Failed to create terminal:', error);
         if (terminalRef.current) {
-          terminalRef.current.writeln('\r\n❌ Failed to connect to shell');
+          terminalRef.current.writeln('\r\n❌ Failed to connect to terminal');
           terminalRef.current.writeln(
             `Error: ${error instanceof Error ? error.message : String(error)}`
           );
@@ -256,6 +287,7 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
       }
     };
 
+    // Setup terminal
     setupTerminal();
 
     return () => {
@@ -265,16 +297,12 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
         terminalRef.current.dispose();
         terminalRef.current = null;
       }
-      // Kill backend terminal session
-      if (currentTerminalId) {
-        client.service('terminals').remove(currentTerminalId).catch(console.error);
-      }
-      removeListeners();
-      setTerminalId(null);
+      // Zellij session persists - just clean up listeners
+      removeChannelListeners();
       setIsConnected(false);
       setSessionInfo({});
     };
-  }, [open, client, initialCommands, isAdmin, worktreeId]);
+  }, [open, client, initialCommands, isAdmin, worktreeId, user?.user_id]);
 
   const handleClose = () => {
     if (isConnected) {

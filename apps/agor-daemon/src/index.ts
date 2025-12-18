@@ -50,7 +50,6 @@ import {
   Forbidden,
   feathers,
   feathersExpress,
-  JWTStrategy,
   LocalStrategy,
   NotAuthenticated,
   rest,
@@ -88,8 +87,14 @@ import type {
   User,
 } from '@agor/core/types';
 import { SessionStatus, TaskStatus } from '@agor/core/types';
-import { buildSpawnArgs } from '@agor/core/unix';
 import { NotFoundError } from '@agor/core/utils/errors';
+
+// Executor spawning utility for fire-and-forget Unix operations
+import {
+  createServiceToken,
+  getDaemonUrl,
+  spawnExecutorFireAndForget,
+} from './utils/spawn-executor.js';
 
 // ============================================================================
 // GLOBAL ERROR HANDLERS
@@ -181,8 +186,6 @@ import { createUserRepoEnvVarsService } from './services/user-repo-env-vars';
 import { createUsersService } from './services/users';
 import { setupWorktreeOwnersService } from './services/worktree-owners.js';
 import { createWorktreesService } from './services/worktrees';
-import { setupWorktreesDiffService } from './services/worktrees-diff.js';
-import { setupWorktreesGitActionsService } from './services/worktrees-git-actions.js';
 import { AnonymousStrategy } from './strategies/anonymous';
 import {
   ensureMinimumRole,
@@ -566,8 +569,12 @@ async function main() {
     // DETERMINE UNIX USER FOR EXECUTOR BASED ON unix_user_mode
     // Uses centralized logic from @agor/core/unix
     // =========================================================================
-    const { resolveUnixUserForImpersonation, validateResolvedUnixUser, UnixUserNotFoundError } =
-      await import('@agor/core/unix');
+    const {
+      resolveUnixUserForImpersonation,
+      validateResolvedUnixUser,
+      UnixUserNotFoundError,
+      buildSpawnArgs,
+    } = await import('@agor/core/unix');
 
     const unixUserMode = (config.execution?.unix_user_mode ?? 'simple') as
       | 'simple'
@@ -598,26 +605,11 @@ async function main() {
 
     // Determine permission mode: explicit override > session config > 'default'
     // This ensures session settings (like bypassPermissions) are preserved unless explicitly overridden
+    // Note: 'default' is not part of the executor's Zod schema, so we convert it to undefined
     const effectivePermissionMode =
-      data.permissionMode || session.permission_config?.mode || 'default';
-
-    const nodeArgs = [
-      executorPath,
-      '--session-token',
-      sessionToken,
-      '--session-id',
-      sessionId,
-      '--task-id',
-      taskId,
-      '--prompt',
-      data.prompt,
-      '--tool',
-      session.agentic_tool,
-      '--permission-mode',
-      effectivePermissionMode,
-      '--daemon-url',
-      daemonUrl,
-    ];
+      data.permissionMode || session.permission_config?.mode || undefined;
+    const permissionModeForPayload =
+      effectivePermissionMode === 'default' ? undefined : effectivePermissionMode;
 
     // Validate Unix user exists for modes that require it
     try {
@@ -638,31 +630,61 @@ async function main() {
       | undefined;
     const executorEnv = await createUserProcessEnvironment(userId, db);
 
-    // Build spawn args - handles impersonation via sudo su - when executorUnixUser is set
-    // When impersonating, uses sudo su - (login shell) to ensure fresh Unix group memberships
-    // This is critical for RBAC: users may have been recently added to worktree groups
-    // IMPORTANT: When impersonating, env vars must be passed through buildSpawnArgs because
-    // sudo su - creates a fresh login shell that ignores the env passed to spawn()
-    const { cmd: spawnCommand, args: spawnArgs } = buildSpawnArgs('node', nodeArgs, {
+    // =========================================================================
+    // PHASE 4: JSON-OVER-STDIN WITH IMPERSONATION AT SPAWN
+    //
+    // Impersonation happens at spawn time using buildSpawnArgs():
+    // - When asUser is set, spawns via `sudo su - $asUser -c 'node executor --stdin'`
+    // - Executor runs directly as target user with fresh group memberships
+    // - No "node calling node" indirection
+    //
+    // Benefits:
+    // - Single spawn, not node-within-node
+    // - Fresh group memberships (login shell via `su -`)
+    // - k8s compatible (can use pod security context instead)
+    // =========================================================================
+
+    // Build JSON payload for executor (Phase 2 --stdin mode)
+    // Note: asUser is NOT in payload - impersonation happens at spawn time
+    const executorPayload = {
+      command: 'prompt' as const,
+      sessionToken,
+      daemonUrl,
+      env: executorEnv,
+      params: {
+        sessionId,
+        taskId,
+        prompt: data.prompt,
+        tool: session.agentic_tool as 'claude-code' | 'gemini' | 'codex' | 'opencode',
+        permissionMode: permissionModeForPayload as 'ask' | 'auto' | 'allow-all' | undefined,
+        cwd,
+      },
+    };
+
+    // Build spawn command - handles impersonation via sudo su - when executorUnixUser is set
+    const { cmd, args } = buildSpawnArgs('node', [executorPath, '--stdin'], {
       asUser: executorUnixUser || undefined,
-      env: executorUnixUser ? executorEnv : undefined, // Only inject when impersonating
+      env: executorUnixUser ? executorEnv : undefined, // Only inject env when impersonating
     });
 
     if (executorUnixUser) {
       console.log(
-        `[Daemon] Spawning executor as Unix user: ${executorUnixUser} (with fresh groups and ${Object.keys(executorEnv).length} env vars)`
+        `[Daemon] Spawning executor as user: ${executorUnixUser} (${Object.keys(executorEnv).length} env vars)`
       );
     } else {
       console.log(`[Daemon] Spawning executor as current user (no impersonation)`);
     }
 
-    // When NOT impersonating, pass env to spawn() directly
-    // When impersonating, env is already injected into the command by buildSpawnArgs
-    const executorProcess = spawn(spawnCommand, spawnArgs, {
+    // Spawn executor with --stdin mode, pipe JSON payload via stdin
+    const executorProcess = spawn(cmd, args, {
       cwd,
-      env: executorUnixUser ? undefined : executorEnv,
-      stdio: ['ignore', 'pipe', 'pipe'], // Capture stdout/stderr
+      env: executorUnixUser ? undefined : executorEnv, // When impersonating, env is in the command
+      stdio: ['pipe', 'pipe', 'pipe'], // Enable stdin for JSON payload
     });
+
+    // Write JSON payload to stdin
+    executorProcess.stdin?.write(JSON.stringify(executorPayload));
+    executorProcess.stdin?.end();
 
     // Log executor output
     executorProcess.stdout?.on('data', (data) => {
@@ -823,49 +845,18 @@ async function main() {
     !app.services['worktrees/:id/owners/:userId']
   ) {
     const worktreeRepo = new WorktreeRepository(db);
-    setupWorktreeOwnersService(app, worktreeRepo);
-  }
-
-  // Register worktrees-diff nested route service for git diff operations
-  // This service is always available (not gated by RBAC)
-  if (!app.services['worktrees/:id/diff']) {
-    const worktreeRepo = new WorktreeRepository(db);
-    setupWorktreesDiffService(app, worktreeRepo);
-  }
-
-  // Register worktrees-git-actions nested route services for git operations
-  // (rebase, merge, rename-branch, create-pr, push, branches)
-  if (!app.services['worktrees/:id/git/rebase']) {
-    const worktreeRepo = new WorktreeRepository(db);
-    setupWorktreesGitActionsService(app, worktreeRepo);
-  }
-
-  // Initialize Unix integration service for worktree isolation
-  // This service manages Unix groups, users, symlinks, and filesystem permissions for RBAC
-  // Only initialize if RBAC is enabled
-  let unixIntegrationService: import('@agor/core/unix').UnixIntegrationService | null = null;
-  if (worktreeRbacEnabled) {
-    const { createUnixIntegrationService, requireDaemonUser } = await import(
-      './services/unix-integration.js'
-    );
-    const unixEnabled =
-      config.execution?.unix_user_mode !== 'simple' &&
-      config.execution?.unix_user_mode !== undefined;
-
-    // Get daemon user - throws if Unix isolation enabled but not configured
-    const daemonUser = requireDaemonUser(config);
-
-    unixIntegrationService = createUnixIntegrationService(db, {
-      enabled: unixEnabled,
-      autoManageSymlinks: unixEnabled,
-      daemonUser,
+    setupWorktreeOwnersService(app, worktreeRepo, {
+      jwtSecret,
+      daemonUser: config.daemon?.unix_user,
     });
-    console.log(
-      `[Unix Integration] ${unixIntegrationService.isEnabled() ? 'Enabled' : 'Disabled'} (mode: ${config.execution?.unix_user_mode || 'simple'}, daemon user: ${daemonUser})`
-    );
+  }
 
-    // Register on app for access by other services (e.g., worktree-owners)
-    app.set('unixIntegration', unixIntegrationService);
+  // Unix integration is now handled by the executor via fire-and-forget spawning
+  // The daemon no longer manages Unix groups/permissions directly
+  // See: packages/executor/src/commands/unix.ts for the sync implementations
+  if (worktreeRbacEnabled) {
+    const daemonUser = config.daemon?.unix_user || 'agor';
+    console.log(`[Unix Integration] Executor-based sync enabled (daemon user: ${daemonUser})`);
   }
 
   // Register repos service (accesses worktrees via app.service('worktrees'))
@@ -943,9 +934,27 @@ async function main() {
     },
   });
 
-  // Discover MCP server capabilities endpoint
+  // Discover/Test MCP server capabilities endpoint
+  // Accepts either:
+  // - mcp_server_id: Test saved server config and persist discovered capabilities
+  // - Inline config (url, transport, auth): Test connection without saving (for form validation)
   app.use('/mcp-servers/discover', {
-    async create(data: { mcp_server_id: string }, params?: AuthenticatedParams) {
+    async create(
+      data: {
+        mcp_server_id?: string;
+        // Inline config for testing unsaved configurations
+        url?: string;
+        transport?: 'http' | 'sse';
+        auth?: {
+          type: 'none' | 'bearer' | 'jwt';
+          token?: string;
+          api_url?: string;
+          api_token?: string;
+          api_secret?: string;
+        };
+      },
+      params?: AuthenticatedParams
+    ) {
       try {
         const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
         const { StreamableHTTPClientTransport } = await import(
@@ -954,60 +963,185 @@ async function main() {
         const { resolveMCPAuthHeaders } = await import('@agor/core/tools/mcp/jwt-auth');
 
         const mcpServerRepo = new MCPServerRepository(db);
-        const server = await mcpServerRepo.findById(data.mcp_server_id);
 
-        if (!server) {
-          return { success: false, error: 'MCP server not found' };
-        }
+        // SSRF Protection: Validate URLs to prevent internal network access
+        const validateUrl = (url: string): { valid: boolean; error?: string } => {
+          try {
+            const parsed = new URL(url);
+            const hostname = parsed.hostname.toLowerCase();
 
-        // SECURITY: Verify user has access to this MCP server
-        // Skip authorization for internal calls (params.provider is falsy)
-        if (params?.provider && params.user) {
-          const userId = params.user.user_id;
+            // Block localhost and loopback
+            if (
+              hostname === 'localhost' ||
+              hostname === '127.0.0.1' ||
+              hostname === '::1' ||
+              hostname === '0.0.0.0'
+            ) {
+              return { valid: false, error: 'Connection to localhost is not allowed' };
+            }
 
-          // For global servers, only the owner can discover them
-          // For session-scoped servers, admins can discover them (sessions service already checks ownership)
-          if (server.scope === 'global' && server.owner_user_id !== userId) {
-            return {
-              success: false,
-              error: 'Access denied: only server owner can discover this MCP server',
-            };
+            // Block private IP ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+            const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+            if (ipv4Match) {
+              const [, a, b] = ipv4Match.map(Number);
+              if (
+                a === 10 ||
+                (a === 172 && b >= 16 && b <= 31) ||
+                (a === 192 && b === 168) ||
+                a === 169 // link-local
+              ) {
+                return { valid: false, error: 'Connection to private IP addresses is not allowed' };
+              }
+            }
+
+            // Block common internal hostnames
+            if (
+              hostname.endsWith('.local') ||
+              hostname.endsWith('.internal') ||
+              hostname.endsWith('.lan')
+            ) {
+              return { valid: false, error: 'Connection to internal hostnames is not allowed' };
+            }
+
+            // Only allow http/https
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+              return { valid: false, error: 'Only HTTP and HTTPS protocols are allowed' };
+            }
+
+            return { valid: true };
+          } catch {
+            return { valid: false, error: 'Invalid URL format' };
+          }
+        };
+
+        // Determine if inline config is provided (form values take precedence for testing)
+        const hasInlineConfig = !!data.url;
+        let serverConfig: {
+          url: string;
+          transport: 'http' | 'sse' | 'stdio';
+          auth?: typeof data.auth;
+          name?: string;
+          scope?: string;
+          owner_user_id?: string;
+        };
+        let serverId: string | undefined;
+
+        if (hasInlineConfig) {
+          // Inline config provided - use form values for testing
+          // This allows testing unsaved changes in edit mode
+          const urlValidation = validateUrl(data.url!);
+          if (!urlValidation.valid) {
+            return { success: false, error: urlValidation.error };
           }
 
-          // For session-scoped servers, require admin role since discovery is a privileged operation
-          // that reveals server capabilities and can trigger outbound connections
-          if (server.scope === 'session') {
-            const userRole = params.user.role?.toLowerCase();
-            if (userRole !== 'admin' && userRole !== 'owner') {
+          serverConfig = {
+            url: data.url!,
+            transport: data.transport || 'http',
+            auth: data.auth,
+            name: 'inline-test',
+          };
+
+          // If mcp_server_id is also provided, we'll persist capabilities after successful test
+          // but still test using the inline config (form values)
+          if (data.mcp_server_id) {
+            // Verify user has access to this server before allowing capability persistence
+            const server = await mcpServerRepo.findById(data.mcp_server_id);
+            if (!server) {
+              return { success: false, error: 'MCP server not found' };
+            }
+
+            // SECURITY: Verify user has access to persist to this MCP server
+            if (params?.provider && params.user) {
+              const userId = params.user.user_id;
+              if (server.scope === 'global' && server.owner_user_id !== userId) {
+                return {
+                  success: false,
+                  error: 'Access denied: only server owner can update this MCP server',
+                };
+              }
+              if (server.scope === 'session') {
+                const userRole = params.user.role?.toLowerCase();
+                if (userRole !== 'admin' && userRole !== 'owner') {
+                  return {
+                    success: false,
+                    error:
+                      'Access denied: admin role required to update session-scoped MCP servers',
+                  };
+                }
+              }
+            }
+            serverId = data.mcp_server_id;
+          }
+        } else if (data.mcp_server_id) {
+          // No inline config - use saved server config
+          const server = await mcpServerRepo.findById(data.mcp_server_id);
+
+          if (!server) {
+            return { success: false, error: 'MCP server not found' };
+          }
+
+          // SECURITY: Verify user has access to this MCP server
+          // Skip authorization for internal calls (params.provider is falsy)
+          if (params?.provider && params.user) {
+            const userId = params.user.user_id;
+
+            // For global servers, only the owner can discover them
+            if (server.scope === 'global' && server.owner_user_id !== userId) {
               return {
                 success: false,
-                error: 'Access denied: admin role required to discover session-scoped MCP servers',
+                error: 'Access denied: only server owner can discover this MCP server',
               };
             }
+
+            // For session-scoped servers, require admin role
+            if (server.scope === 'session') {
+              const userRole = params.user.role?.toLowerCase();
+              if (userRole !== 'admin' && userRole !== 'owner') {
+                return {
+                  success: false,
+                  error:
+                    'Access denied: admin role required to discover session-scoped MCP servers',
+                };
+              }
+            }
           }
+
+          // Validate the saved URL too
+          if (server.url) {
+            const urlValidation = validateUrl(server.url);
+            if (!urlValidation.valid) {
+              return { success: false, error: urlValidation.error };
+            }
+          }
+
+          serverConfig = {
+            url: server.url || '',
+            transport: (server.transport as 'http' | 'sse') || (server.url ? 'http' : 'stdio'),
+            auth: server.auth,
+            name: server.name,
+            scope: server.scope,
+            owner_user_id: server.owner_user_id,
+          };
+          serverId = data.mcp_server_id;
+        } else {
+          return { success: false, error: 'Either mcp_server_id or url is required' };
         }
 
-        // Infer transport from URL if not set (backwards compatibility)
-        const transport = server.transport || (server.url ? 'http' : 'stdio');
-
         // Only support HTTP/SSE (stdio requires process spawning)
-        if (transport === 'stdio') {
+        if (serverConfig.transport === 'stdio' || !serverConfig.url) {
           return {
             success: false,
-            error: `Tool discovery not supported for stdio servers (requires active session)`,
+            error: `Connection test not supported for stdio servers (requires active session)`,
           };
         }
 
-        if (!server.url) {
-          return { success: false, error: 'Server URL not configured' };
-        }
-
-        console.log('[MCP Discovery] Starting discovery for:', server.name || server.mcp_server_id);
-        console.log('[MCP Discovery] URL:', server.url);
-        console.log('[MCP Discovery] Transport:', transport);
+        console.log('[MCP Discovery] Starting test for:', serverConfig.name || 'inline-config');
+        console.log('[MCP Discovery] URL:', serverConfig.url);
+        console.log('[MCP Discovery] Transport:', serverConfig.transport);
+        console.log('[MCP Discovery] Mode:', hasInlineConfig ? 'inline-test' : 'saved-server');
 
         // Get auth headers
-        const authHeaders = await resolveMCPAuthHeaders(server.auth);
+        const authHeaders = await resolveMCPAuthHeaders(serverConfig.auth);
         console.log('[MCP Discovery] Auth headers present:', !!authHeaders);
         if (authHeaders) {
           console.log('[MCP Discovery] Auth headers keys:', Object.keys(authHeaders));
@@ -1022,7 +1156,7 @@ async function main() {
         }
 
         // Create Streamable HTTP transport (supports both SSE and regular HTTP)
-        const httpTransport = new StreamableHTTPClientTransport(new URL(server.url), {
+        const httpTransport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
           requestInit: {
             headers,
           },
@@ -1043,7 +1177,7 @@ async function main() {
 
         try {
           console.log('[MCP Discovery] Connecting to HTTP endpoint...');
-          console.log('[MCP Discovery] URL:', server.url);
+          console.log('[MCP Discovery] URL:', serverConfig.url);
           console.log('[MCP Discovery] Headers:', JSON.stringify(headers, null, 2));
 
           // Add timeout to prevent hanging indefinitely (10s should be plenty)
@@ -1133,28 +1267,30 @@ async function main() {
           ])) as PromptsResult;
           console.log('[MCP Discovery] ✅ Found', promptsResult.prompts.length, 'prompts');
 
-          // Update server with discovered capabilities
-          await mcpServerRepo.update(data.mcp_server_id, {
-            tools: toolsResult.tools.map((t) => ({
-              name: t.name,
-              description: t.description || '',
-              input_schema: t.inputSchema,
-            })),
-            resources: resourcesResult.resources.map((r) => ({
-              uri: r.uri,
-              name: r.name,
-              mimeType: r.mimeType,
-            })),
-            prompts: promptsResult.prompts.map((p) => ({
-              name: p.name,
-              description: p.description || '',
-              arguments: p.arguments?.map((a) => ({
-                name: a.name,
-                description: a.description || '',
-                required: a.required,
+          // Only persist capabilities if testing a saved server (not inline test)
+          if (serverId) {
+            await mcpServerRepo.update(serverId, {
+              tools: toolsResult.tools.map((t) => ({
+                name: t.name,
+                description: t.description || '',
+                input_schema: t.inputSchema,
               })),
-            })),
-          });
+              resources: resourcesResult.resources.map((r) => ({
+                uri: r.uri,
+                name: r.name,
+                mimeType: r.mimeType,
+              })),
+              prompts: promptsResult.prompts.map((p) => ({
+                name: p.name,
+                description: p.description || '',
+                arguments: p.arguments?.map((a) => ({
+                  name: a.name,
+                  description: a.description || '',
+                  required: a.required,
+                })),
+              })),
+            });
+          }
 
           return {
             success: true,
@@ -1163,6 +1299,20 @@ async function main() {
               resources: resourcesResult.resources.length,
               prompts: promptsResult.prompts.length,
             },
+            // Include tool/resource names for inline display
+            tools: toolsResult.tools.map((t) => ({
+              name: t.name,
+              description: t.description || '',
+            })),
+            resources: resourcesResult.resources.map((r) => ({
+              name: r.name,
+              uri: r.uri,
+              mimeType: r.mimeType,
+            })),
+            prompts: promptsResult.prompts.map((p) => ({
+              name: p.name,
+              description: p.description || '',
+            })),
           };
         } finally {
           // Always close connection if it was established
@@ -1497,7 +1647,7 @@ async function main() {
             ]
           : []),
         // Capture previous others_fs_access for comparison in after hook
-        ...(worktreeRbacEnabled && unixIntegrationService
+        ...(worktreeRbacEnabled
           ? [
               async (context: HookContext) => {
                 const patchData = context.data as Partial<import('@agor/core/types').Worktree>;
@@ -1545,21 +1695,22 @@ async function main() {
                   `[RBAC] Added creator ${creatorId.substring(0, 8)} as owner of worktree ${worktree.worktree_id.substring(0, 8)}`
                 );
 
-                // Unix Integration: Create group and add creator
-                if (unixIntegrationService) {
-                  try {
-                    await unixIntegrationService.createWorktreeGroup(worktree.worktree_id);
-                    await unixIntegrationService.addUserToWorktreeGroup(
-                      worktree.worktree_id,
-                      creatorId as import('@agor/core/types').UUID
-                    );
-                    // Fix permissions on .git/worktrees/<name>/ directory
-                    // Git creates this with umask, so group write is missing
-                    await unixIntegrationService.fixWorktreeGitDirPermissions(worktree.worktree_id);
-                  } catch (error) {
-                    console.error('[Unix Integration] Failed to setup worktree group:', error);
-                    // Continue - app-layer RBAC is still functional
-                  }
+                // Unix Integration: Fire-and-forget sync to executor
+                // The executor will handle group creation, user membership, and permissions
+                if (worktreeRbacEnabled && jwtSecret) {
+                  const serviceToken = createServiceToken(jwtSecret);
+                  spawnExecutorFireAndForget(
+                    {
+                      command: 'unix.sync-worktree',
+                      sessionToken: serviceToken,
+                      daemonUrl: getDaemonUrl(),
+                      params: {
+                        worktreeId: worktree.worktree_id,
+                        daemonUser: config.daemon?.unix_user,
+                      },
+                    },
+                    { logPrefix: '[Executor/worktree.create]' }
+                  );
                 }
 
                 return context;
@@ -1568,16 +1719,16 @@ async function main() {
           : []),
       ],
       patch: [
-        ...(worktreeRbacEnabled && unixIntegrationService
+        ...(worktreeRbacEnabled
           ? [
               async (context: HookContext) => {
-                // Unix Integration: Update Unix permissions when others_fs_access changes
+                // Unix Integration: Sync worktree permissions when others_fs_access changes
                 const params = context.params as AuthenticatedParams & {
                   _skipUnixSync?: boolean;
                   _previousOthersFsAccess?: string;
                 };
 
-                // Skip if this is a revert call from a failed chmod
+                // Skip if this is flagged to skip Unix sync
                 if (params._skipUnixSync) {
                   return context;
                 }
@@ -1591,7 +1742,7 @@ async function main() {
 
                 const worktree = context.result as import('@agor/core/types').Worktree;
 
-                // Check if the value actually changed (avoid unnecessary chmod)
+                // Check if the value actually changed (avoid unnecessary sync)
                 const previousValue = params._previousOthersFsAccess;
                 if (previousValue === worktree.others_fs_access) {
                   console.log(
@@ -1600,40 +1751,31 @@ async function main() {
                   return context;
                 }
 
-                if (!worktree.path || !worktree.unix_group) {
+                if (!worktree.path) {
                   console.log(
-                    `[Unix Integration] Worktree ${worktree.worktree_id.substring(0, 8)} has no path or unix_group, skipping permission update`
+                    `[Unix Integration] Worktree ${worktree.worktree_id.substring(0, 8)} has no path, skipping permission update`
                   );
                   return context;
                 }
 
-                try {
+                // Fire-and-forget sync to executor
+                // The executor will handle permission changes idempotently
+                if (jwtSecret) {
                   console.log(
-                    `[Unix Integration] Updating permissions for worktree ${worktree.worktree_id.substring(0, 8)} (others_fs_access: ${previousValue} -> ${worktree.others_fs_access})`
+                    `[Unix Integration] Syncing permissions for worktree ${worktree.worktree_id.substring(0, 8)} (others_fs_access: ${previousValue} -> ${worktree.others_fs_access})`
                   );
-                  await unixIntegrationService.setWorktreePermissions(
-                    worktree.worktree_id,
-                    worktree.path
-                  );
-                } catch (error) {
-                  // Security: If chmod fails, revert the DB change so UI doesn't show wrong state
-                  console.error(
-                    '[Unix Integration] Failed to update worktree permissions, reverting DB change:',
-                    error
-                  );
-                  if (previousValue !== undefined) {
-                    try {
-                      await context.service.patch(
-                        worktree.worktree_id,
-                        { others_fs_access: previousValue },
-                        { ...params, _skipUnixSync: true }
-                      );
-                    } catch (revertError) {
-                      console.error('[Unix Integration] Failed to revert DB change:', revertError);
-                    }
-                  }
-                  throw new Error(
-                    `Failed to update filesystem permissions: ${error instanceof Error ? error.message : String(error)}`
+                  const serviceToken = createServiceToken(jwtSecret);
+                  spawnExecutorFireAndForget(
+                    {
+                      command: 'unix.sync-worktree',
+                      sessionToken: serviceToken,
+                      daemonUrl: getDaemonUrl(),
+                      params: {
+                        worktreeId: worktree.worktree_id,
+                        daemonUser: config.daemon?.unix_user,
+                      },
+                    },
+                    { logPrefix: '[Executor/worktree.patch]' }
                   );
                 }
 
@@ -1643,17 +1785,28 @@ async function main() {
           : []),
       ],
       remove: [
-        ...(worktreeRbacEnabled && unixIntegrationService
+        ...(worktreeRbacEnabled
           ? [
               async (context: HookContext) => {
                 // Unix Integration: Delete Unix group when worktree is deleted
                 const worktreeId = context.id as import('@agor/core/types').WorktreeID;
 
-                try {
-                  await unixIntegrationService.deleteWorktreeGroup(worktreeId);
-                } catch (error) {
-                  console.error('[Unix Integration] Failed to delete worktree group:', error);
-                  // Continue - worktree is already deleted from database
+                // Fire-and-forget sync with delete flag to executor
+                if (jwtSecret) {
+                  const serviceToken = createServiceToken(jwtSecret);
+                  spawnExecutorFireAndForget(
+                    {
+                      command: 'unix.sync-worktree',
+                      sessionToken: serviceToken,
+                      daemonUrl: getDaemonUrl(),
+                      params: {
+                        worktreeId,
+                        daemonUser: config.daemon?.unix_user,
+                        delete: true, // Signal to delete the group instead of syncing
+                      },
+                    },
+                    { logPrefix: '[Executor/worktree.remove]' }
+                  );
                 }
 
                 return context;
@@ -1806,10 +1959,8 @@ async function main() {
       // After user create/patch: optionally ensure Unix user exists and sync password
       create: [
         async (context: HookContext) => {
-          const unixIntegration = app.get('unixIntegration') as
-            | import('@agor/core/unix').UnixIntegrationService
-            | undefined;
-          if (!unixIntegration?.isEnabled()) {
+          // Skip Unix sync if RBAC is disabled
+          if (!worktreeRbacEnabled || !jwtSecret) {
             return context;
           }
 
@@ -1818,60 +1969,58 @@ async function main() {
             return context; // No unix_username set, skip Unix user creation
           }
 
-          try {
-            await unixIntegration.ensureUnixUser(user.user_id);
-            console.log(`[Unix Integration] Ensured Unix user for: ${user.unix_username}`);
-          } catch (error) {
-            console.error('[Unix Integration] Failed to create Unix user:', error);
-            // Don't fail the request - Agor user is already created
-          }
-
-          // Sync password if plaintext is available (context.data contains original input)
+          // Get plaintext password from request data (for password sync)
           const data = context.data as { password?: string };
-          if (data?.password) {
-            try {
-              await unixIntegration.syncPassword(user.user_id, data.password);
-            } catch (error) {
-              console.error('[Unix Integration] Failed to sync password on user creation:', error);
-              // Don't fail user creation if password sync fails
-            }
-          }
+
+          // Fire-and-forget sync to executor
+          console.log(`[Unix Integration] Syncing Unix user for: ${user.unix_username}`);
+          const serviceToken = createServiceToken(jwtSecret);
+          spawnExecutorFireAndForget(
+            {
+              command: 'unix.sync-user',
+              sessionToken: serviceToken,
+              daemonUrl: getDaemonUrl(),
+              params: {
+                userId: user.user_id,
+                password: data?.password, // Pass through for password sync
+              },
+            },
+            { logPrefix: '[Executor/user.create]' }
+          );
 
           return context;
         },
       ],
       patch: [
         async (context: HookContext) => {
-          const unixIntegration = app.get('unixIntegration') as
-            | import('@agor/core/unix').UnixIntegrationService
-            | undefined;
-          if (!unixIntegration?.isEnabled()) {
+          // Skip Unix sync if RBAC is disabled
+          if (!worktreeRbacEnabled || !jwtSecret) {
             return context;
           }
 
           const data = context.data as { unix_username?: string; password?: string };
           const user = context.result as User;
 
-          // Handle unix_username changes (existing logic)
-          if (data?.unix_username) {
-            try {
-              await unixIntegration.ensureUnixUser(user.user_id);
-              console.log(`[Unix Integration] Ensured Unix user for: ${user.unix_username}`);
-            } catch (error) {
-              console.error('[Unix Integration] Failed to create Unix user:', error);
-              // Don't fail the request - Agor user is already updated
-            }
+          // Only sync if unix_username or password changed
+          if (!data?.unix_username && !data?.password) {
+            return context;
           }
 
-          // Handle password changes
-          if (data?.password) {
-            try {
-              await unixIntegration.syncPassword(user.user_id, data.password);
-            } catch (error) {
-              console.error('[Unix Integration] Failed to sync password on update:', error);
-              // Don't fail patch if password sync fails
-            }
-          }
+          // Fire-and-forget sync to executor
+          console.log(`[Unix Integration] Syncing Unix user for: ${user.unix_username}`);
+          const serviceToken = createServiceToken(jwtSecret);
+          spawnExecutorFireAndForget(
+            {
+              command: 'unix.sync-user',
+              sessionToken: serviceToken,
+              daemonUrl: getDaemonUrl(),
+              params: {
+                userId: user.user_id,
+                password: data?.password, // Pass through for password sync
+              },
+            },
+            { logPrefix: '[Executor/user.patch]' }
+          );
 
           return context;
         },
@@ -2328,11 +2477,14 @@ async function main() {
   // Configure authentication
   const authentication = new AuthenticationService(app);
 
+  // Import custom JWT strategy that handles service tokens
+  const { ServiceJWTStrategy } = await import('./auth/service-jwt-strategy.js');
+
   // Register authentication strategies
-  // NOTE: We no longer need a custom session-token strategy!
-  // Session tokens are now JWTs, so they work with the standard JWT strategy.
-  // This eliminates all the complexity of custom strategies and socket storage.
-  authentication.register('jwt', new JWTStrategy());
+  // NOTE: We use a custom ServiceJWTStrategy that handles both:
+  // 1. Regular user JWTs (standard authentication)
+  // 2. Service JWTs (for executor authentication with sub: 'executor-service')
+  authentication.register('jwt', new ServiceJWTStrategy());
   authentication.register('local', new LocalStrategy());
   authentication.register('anonymous', new AnonymousStrategy());
 
@@ -3340,37 +3492,33 @@ async function main() {
         // Find the currently running task(s)
         // Note: Using two separate queries to avoid $in operator which fails schema validation
         let runningTasksArray: Task[] = [];
-        try {
-          // Query for RUNNING tasks
-          const runningResult = await tasksService.find({
-            query: {
-              session_id: id,
-              status: TaskStatus.RUNNING,
-              $limit: 10,
-            },
-          });
-          const runningFindResult = runningResult as Task[] | Paginated<Task>;
-          const runningTasks = isPaginated(runningFindResult)
-            ? runningFindResult.data
-            : runningFindResult;
+        // Query for RUNNING tasks
+        const runningResult = await tasksService.find({
+          query: {
+            session_id: id,
+            status: TaskStatus.RUNNING,
+            $limit: 10,
+          },
+        });
+        const runningFindResult = runningResult as Task[] | Paginated<Task>;
+        const runningTasks = isPaginated(runningFindResult)
+          ? runningFindResult.data
+          : runningFindResult;
 
-          // Query for AWAITING_PERMISSION tasks
-          const awaitingResult = await tasksService.find({
-            query: {
-              session_id: id,
-              status: TaskStatus.AWAITING_PERMISSION,
-              $limit: 10,
-            },
-          });
-          const awaitingFindResult = awaitingResult as Task[] | Paginated<Task>;
-          const awaitingTasks = isPaginated(awaitingFindResult)
-            ? awaitingFindResult.data
-            : awaitingFindResult;
+        // Query for AWAITING_PERMISSION tasks
+        const awaitingResult = await tasksService.find({
+          query: {
+            session_id: id,
+            status: TaskStatus.AWAITING_PERMISSION,
+            $limit: 10,
+          },
+        });
+        const awaitingFindResult = awaitingResult as Task[] | Paginated<Task>;
+        const awaitingTasks = isPaginated(awaitingFindResult)
+          ? awaitingFindResult.data
+          : awaitingFindResult;
 
-          runningTasksArray = [...runningTasks, ...awaitingTasks];
-        } catch (findError) {
-          throw findError;
-        }
+        runningTasksArray = [...runningTasks, ...awaitingTasks];
 
         if (runningTasksArray.length === 0) {
           return {

@@ -112,13 +112,30 @@ export function createSocketIOConfig(
         const decoded = jwt.verify(token, jwtSecret, {
           issuer: 'agor',
           audience: 'https://agor.dev',
-        }) as { sub: string; type: string };
+        }) as { sub: string; type?: string; role?: string };
 
-        if (decoded.type !== 'access') {
+        // Allow user tokens and service tokens (used by executor)
+        // - undefined/access: User tokens (SessionTokenService doesn't set type claim)
+        // - service: Executor service tokens (for terminal streaming, git ops, etc.)
+        const tokenType = decoded.type;
+        if (tokenType !== undefined && tokenType !== 'access' && tokenType !== 'service') {
           return next(new Error('Invalid token type'));
         }
 
-        // Fetch user from database
+        // Handle service tokens (used by executor for terminal streaming, git operations, etc.)
+        if (tokenType === 'service') {
+          // Service tokens don't have a user - they authenticate the executor process
+          // Mark as service connection for potential authorization checks
+          (socket as FeathersSocket).feathers = {
+            // No user - this is a service connection
+          };
+          console.log(
+            `🔐 WebSocket authenticated (service): ${socket.id} (role: ${decoded.role || 'unknown'})`
+          );
+          return next();
+        }
+
+        // Handle user access tokens - fetch user from database
         const user = await app.service('users').get(decoded.sub as import('@agor/core/types').UUID);
 
         // Attach user to socket (FeathersJS convention)
@@ -183,6 +200,69 @@ export function createSocketIOConfig(
           boardId: data.boardId,
           timestamp: Date.now(),
         });
+      });
+
+      // =========================================================================
+      // TERMINAL CHANNEL SUPPORT
+      // Executors and browsers can join user-specific terminal channels
+      // for streaming PTY I/O.
+      // =========================================================================
+
+      // Handle explicit channel joins (for terminal channels)
+      socket.on('join', (channel: string) => {
+        // Validate channel format: user/${userId}/terminal
+        if (channel.startsWith('user/') && channel.endsWith('/terminal')) {
+          console.log(`🖥️  Socket ${socket.id} joining terminal channel: ${channel}`);
+          socket.join(channel);
+        } else {
+          console.warn(`⚠️  Socket ${socket.id} tried to join invalid channel: ${channel}`);
+        }
+      });
+
+      // Handle explicit channel leaves
+      socket.on('leave', (channel: string) => {
+        console.log(`🖥️  Socket ${socket.id} leaving channel: ${channel}`);
+        socket.leave(channel);
+      });
+
+      // Route terminal output from executor to browser
+      // Executor emits: terminal:output { userId, data }
+      // Browser receives: terminal:output { userId, data }
+      socket.on('terminal:output', (data: { userId: string; data: string }) => {
+        const channel = `user/${data.userId}/terminal`;
+        // Broadcast to channel (including sender for echo)
+        io.to(channel).emit('terminal:output', data);
+      });
+
+      // Route terminal input from browser to executor
+      // Browser emits: terminal:input { userId, input }
+      // Executor receives: terminal:input { userId, input }
+      socket.on('terminal:input', (data: { userId: string; input: string }) => {
+        const channel = `user/${data.userId}/terminal`;
+        // Broadcast to channel (executor will filter by userId)
+        io.to(channel).emit('terminal:input', data);
+      });
+
+      // Route terminal resize events
+      socket.on('terminal:resize', (data: { userId: string; cols: number; rows: number }) => {
+        const channel = `user/${data.userId}/terminal`;
+        io.to(channel).emit('terminal:resize', data);
+      });
+
+      // Route terminal tab commands
+      socket.on(
+        'terminal:tab',
+        (data: { userId: string; action: string; tabName: string; cwd?: string }) => {
+          const channel = `user/${data.userId}/terminal`;
+          io.to(channel).emit('terminal:tab', data);
+        }
+      );
+
+      // Handle terminal exit notification from executor
+      socket.on('terminal:exit', (data: { userId: string; exitCode: number; signal?: number }) => {
+        const channel = `user/${data.userId}/terminal`;
+        io.to(channel).emit('terminal:exit', data);
+        console.log(`🖥️  Terminal exited for user ${data.userId}: code=${data.exitCode}`);
       });
 
       // Track disconnections

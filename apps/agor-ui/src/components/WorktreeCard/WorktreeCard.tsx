@@ -176,6 +176,10 @@ const WorktreeCardComponent = ({
     [sessions]
   );
 
+  // Check if worktree is still being created on filesystem
+  const isCreating = worktree.filesystem_status === 'creating';
+  const isFailed = worktree.filesystem_status === 'failed';
+
   // Check if worktree needs attention (newly created OR has ready sessions)
   // Don't highlight if a session from this worktree is currently open in the drawer
   const needsAttention = useMemo(() => {
@@ -343,11 +347,12 @@ const WorktreeCardComponent = ({
             type="default"
             size="small"
             icon={<PlusOutlined />}
-            disabled={connectionDisabled}
+            disabled={connectionDisabled || isCreating}
             onClick={(e) => {
               e.stopPropagation();
               onCreateSession(worktree.worktree_id);
             }}
+            title={isCreating ? 'Worktree is being created...' : undefined}
           >
             New Session
           </Button>
@@ -499,10 +504,15 @@ const WorktreeCardComponent = ({
                 justifyContent: 'center',
               }}
             >
-              {hasRunningSession ? (
+              {isCreating || hasRunningSession ? (
                 <Spin size="large" />
               ) : (
-                <BranchesOutlined style={{ fontSize: 32, color: token.colorPrimary }} />
+                <BranchesOutlined
+                  style={{
+                    fontSize: 32,
+                    color: isFailed ? token.colorError : token.colorPrimary,
+                  }}
+                />
               )}
             </div>
           )}
@@ -674,7 +684,11 @@ const WorktreeCardComponent = ({
               marginTop: 8,
             }}
           >
-            {onCreateSession && (
+            {isCreating ? (
+              <Typography.Text type="secondary">Creating worktree on filesystem...</Typography.Text>
+            ) : isFailed ? (
+              <Typography.Text type="danger">Worktree creation failed</Typography.Text>
+            ) : onCreateSession ? (
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
@@ -687,7 +701,7 @@ const WorktreeCardComponent = ({
               >
                 Create Session
               </Button>
-            )}
+            ) : null}
           </div>
         ) : (
           // Has sessions: show collapsible sections
